@@ -10,7 +10,7 @@ const speakeasy = require("speakeasy");
 //////////////////// CONFIG ////////////////////
 const SITE_URL = "https://www.instagram.com/accounts/emailsignup/"; // KAYIT SAYFASI URL
 const PASSWORD_VALUE = "Okanokan10!";
-const SHEET_ID = "1gV9pYAY9yyTNQULP9X64Z2GHJbqLsT7P1SPjqnkqq2M";
+const SHEET_ID = "1UgCB8MemIK0uEUOewbAD7g9CCnxxUdXIOXZR9UV5zdw";
 const SHEET_NAME = "imap";
  
 const CREDENTIALS_DIR = path.join(__dirname, "credentials");
