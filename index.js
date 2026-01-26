@@ -193,38 +193,6 @@ async function clearAndType(page, selector, text) {
   }, selector);
   await page.type(selector, text, { delay: randInt(35, 80) });
 }
- 
-async function forceTypeUsername(page, selector, text) {
-  await page.waitForSelector(selector, { visible: true });
-  await sleep(1500);
- 
-  await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    el.focus();
-    const setter = Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      "value"
-    ).set;
-    setter.call(el, "");
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  }, selector);
- 
-  await page.type(selector, text, { delay: randInt(35, 80) });
- 
-  // son kontrol
-  await sleep(600);
-  await page.evaluate(
-    (sel, val) => {
-      const el = document.querySelector(sel);
-      if (el && el.value !== val) {
-        el.value = val;
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-    },
-    selector,
-    text
-  );
-}
 
 async function clickBitti(page, timeout = 60000) {
   const labels = ["Bitti", "Done"];
@@ -336,88 +304,6 @@ async function enter2FAHumanLike(page, secret) {
 
   throw new Error("⛔ Authenticator kodu 2 denemede de reddedildi");
 }
-async function clickIleriInstagram(page, timeout = 30000) {
-  await page.waitForFunction(() => {
-    return [...document.querySelectorAll("span")]
-      .some(s => s.innerText?.trim() === "İleri" || s.innerText?.trim() === "Next");
-  }, { timeout });
-
-  const clicked = await page.evaluate(() => {
-    const span = [...document.querySelectorAll("span")]
-      .find(s => s.innerText?.trim() === "İleri" || s.innerText?.trim() === "Next");
-
-    if (!span) return false;
-
-    let el = span;
-    for (let i = 0; i < 10; i++) {
-      if (!el || el === document.body) break;
-
-      // Instagram'da en dış tıklanabilir container DIV oluyor
-      if (el.tagName === "DIV") {
-        el.scrollIntoView({ block: "center" });
-        el.click();
-        return true;
-      }
-      el = el.parentElement;
-    }
-    return false;
-  });
-
-  if (!clicked) {
-    throw new Error("⛔ Instagram İleri butonu tıklanamadı");
-  }
-
-  await new Promise(r => setTimeout(r, 1500));
-}
-async function fillSignupFormHuman(page, { email, password, fullName, username }) {
-  await page.waitForSelector("input", { timeout: 60000 });
-
-  const inputs = await page.$$eval("input", els => els.map((e, i) => ({
-    idx: i,
-    type: e.type,
-  })));
-
-  console.log("🧩 Bulunan inputlar:", inputs);
-
-  const allInputs = await page.$$("input");
-
-  if (allInputs.length < 4) {
-    throw new Error("⛔ Yeterli input bulunamadı: " + allInputs.length);
-  }
-
-  // 🎯 Instagram yeni UI sırası:
-  // 0 → email
-  // 1 → password
-  // son -2 → full name
-  // son -1 → username
-
-  async function humanType(el, text) {
-    await el.click({ clickCount: 3 });
-    await sleep(randInt(300, 600));
-
-    for (const ch of text) {
-      await el.type(ch, { delay: randInt(40, 90) });
-    }
-
-    await sleep(randInt(300, 600));
-  }
-
-  console.log("✍️ Email yazılıyor...");
-  await humanType(allInputs[0], email);
-
-  console.log("✍️ Password yazılıyor...");
-  await humanType(allInputs[1], password);
-
-  console.log("✍️ Full name yazılıyor...");
-  await humanType(allInputs[allInputs.length - 2], fullName);
-
-  console.log("✍️ Username yazılıyor...");
-  await humanType(allInputs[allInputs.length - 1], username);
-
-  console.log("✅ Signup form insansı şekilde dolduruldu");
-}
-
-
 
 async function getEmailFromToken(tokenPath) {
   validateTokenStructure(tokenPath);
@@ -429,51 +315,55 @@ async function getEmailFromToken(tokenPath) {
   return profile.data.emailAddress.toLowerCase();
 }
 
-
 async function clickIleri(page, timeout = 45000) {
-  const labels = ["İleri", "Next"];
- 
+  const labels = ["İleri", "Next", "Continue"];
+
   await page.waitForFunction(
     (labels) => {
-      const nodes = [
-        ...document.querySelectorAll("button, div[role='button'], [role='button'], a"),
-      ];
-      return nodes.some((n) => {
-        const t = (n.innerText || n.textContent || "").trim();
-        const visible = n.offsetParent !== null;
-        const disabled =
-          n.disabled ||
-          n.getAttribute("aria-disabled") === "true" ||
-          n.getAttribute("disabled") !== null;
-        return visible && !disabled && labels.includes(t);
-      });
+      return [...document.querySelectorAll("span")]
+        .some(s => labels.includes((s.innerText || "").trim()));
     },
     { timeout },
     labels
   );
- 
+
   const clicked = await page.evaluate((labels) => {
-    const nodes = [
-      ...document.querySelectorAll("button, div[role='button'], [role='button'], a"),
-    ];
-    const el = nodes.find((n) => {
-      const t = (n.innerText || n.textContent || "").trim();
-      const visible = n.offsetParent !== null;
-      const disabled =
-        n.disabled ||
-        n.getAttribute("aria-disabled") === "true" ||
-        n.getAttribute("disabled") !== null;
-      return visible && !disabled && labels.includes(t);
-    });
- 
-    if (!el) return false;
-    el.scrollIntoView({ block: "center" });
-    el.click();
-    return true;
+    const span = [...document.querySelectorAll("span")]
+      .find(s => labels.includes((s.innerText || "").trim()));
+
+    if (!span) return false;
+
+    let el = span;
+
+    // 🔥 en dış tıklanabilir container’a kadar çık
+    for (let i = 0; i < 12; i++) {
+      if (!el || el === document.body) break;
+
+      const role = el.getAttribute?.("role");
+      const clickable =
+        el.tagName === "BUTTON" ||
+        role === "button" ||
+        el.onclick ||
+        el.getAttribute?.("tabindex") !== null ||
+        el.tagName === "DIV";
+
+      if (clickable) {
+        el.scrollIntoView({ block: "center" });
+        el.click();
+        return true;
+      }
+
+      el = el.parentElement;
+    }
+
+    return false;
   }, labels);
- 
-  if (!clicked) throw new Error("İleri / Next butonu tıklanamadı");
-  await new Promise((r) => setTimeout(r, 700));
+
+  if (!clicked) {
+    throw new Error("⛔ Continue / İleri butonu tıklanamadı");
+  }
+
+  await new Promise(r => setTimeout(r, 1200));
 }
 
 async function get2FASecret(page, timeout = 60000) {
@@ -860,91 +750,11 @@ async function isInvalidCodeVisible(page) {
       );
   });
 }
-async function selectComboByText(page, labelText, optionText) {
-  await page.waitForFunction(
-    (label) => {
-      return [...document.querySelectorAll("span")]
-        .some(s => (s.innerText || "").trim().toLowerCase() === label.toLowerCase());
-    },
-    { timeout: 60000 },
-    labelText
-  );
-
-  // combobox'a tıkla
-  await page.evaluate((label) => {
-    const span = [...document.querySelectorAll("span")]
-      .find(s => (s.innerText || "").trim().toLowerCase() === label.toLowerCase());
-
-    let el = span;
-    for (let i = 0; i < 10; i++) {
-      if (!el) break;
-      if (el.getAttribute?.("role") === "combobox") {
-        el.click();
-        return;
-      }
-      el = el.parentElement;
-    }
-  }, labelText);
-
-  await sleep(800);
-
-  // option seç
-  await page.waitForFunction(
-    (val) => {
-      return [...document.querySelectorAll("div, span")]
-        .some(e => (e.innerText || "").trim() === val);
-    },
-    { timeout: 30000 },
-    optionText
-  );
-
-  await page.evaluate((val) => {
-    const opt = [...document.querySelectorAll("div, span")]
-      .find(e => (e.innerText || "").trim() === val);
-
-    if (opt) opt.click();
-  }, optionText);
-
-  await sleep(500);
-}
 async function goTo2FA(page) {
   await page.goto(
     "https://accountscenter.instagram.com/password_and_security/two_factor/?theme=dark",
     { waitUntil: "domcontentloaded" }
   );
-}
-async function clickIleriFinal(page, timeout = 60000) {
-  await page.waitForFunction(
-    () => [...document.querySelectorAll("span")]
-      .some(s => s.innerText?.trim() === "İleri"),
-    { timeout }
-  );
-
-  const clicked = await page.evaluate(() => {
-    const span = [...document.querySelectorAll("span")]
-      .find(s => s.innerText?.trim() === "İleri");
-    if (!span) return false;
-
-    // 🔥 EN DIŞ TIKLANABİLİR CONTAINER’A KADAR ÇIK
-    let el = span;
-    for (let i = 0; i < 10; i++) {
-      if (!el || el === document.body) break;
-      if (el.tagName === "DIV") {
-        el.scrollIntoView({ block: "center" });
-        el.click();
-        return true;
-      }
-      el = el.parentElement;
-    }
-
-    return false;
-  });
-
-  if (!clicked) {
-    throw new Error("⛔ İleri butonu tıklanamadı (outer div)");
-  }
-
-  await new Promise(r => setTimeout(r, 1500));
 }
 
 async function clickKaydol(page, timeout = 45000) {
@@ -952,89 +762,50 @@ async function clickKaydol(page, timeout = 45000) {
 
   await page.waitForFunction(
     (labels) => {
-      const nodes = [
-        ...document.querySelectorAll("button, span, div, [role='button'], a"),
-      ];
-      return nodes.some(
-        (b) =>
-          labels.includes((b.innerText || "").trim()) &&
-          b.offsetParent !== null
-      );
+      return [...document.querySelectorAll("span")]
+        .some(s => labels.includes((s.innerText || "").trim()));
     },
     { timeout },
     labels
   );
 
   const clicked = await page.evaluate((labels) => {
-    const nodes = [
-      ...document.querySelectorAll("button, span, div, [role='button'], a"),
-    ];
+    const span = [...document.querySelectorAll("span")]
+      .find(s => labels.includes((s.innerText || "").trim()));
 
-    const el = nodes.find(
-      (b) =>
-        labels.includes((b.innerText || "").trim()) &&
-        b.offsetParent !== null
-    );
+    if (!span) return false;
 
-    if (!el) return false;
+    let el = span;
 
-    let target = el;
-    for (let i = 0; i < 8; i++) {
-      if (!target) break;
-      if (
-        target.tagName === "DIV" ||
-        target.tagName === "BUTTON" ||
-        target.getAttribute("role") === "button" ||
-        target.tagName === "A" ||
-        target.tagName === "SPAN"
-      ) {
-        target.scrollIntoView({ block: "center" });
-        target.click();
+    // 🔥 en dış tıklanabilir container’a kadar çık
+    for (let i = 0; i < 12; i++) {
+      if (!el || el === document.body) break;
+
+      const role = el.getAttribute?.("role");
+      const clickable =
+        el.tagName === "BUTTON" ||
+        role === "button" ||
+        el.onclick ||
+        el.getAttribute?.("tabindex") !== null ||
+        el.tagName === "DIV";
+
+      if (clickable) {
+        el.scrollIntoView({ block: "center" });
+        el.click();
         return true;
       }
-      target = target.parentElement;
+
+      el = el.parentElement;
     }
 
     return false;
   }, labels);
 
   if (!clicked) {
-    throw new Error("⛔ Kaydol / Submit butonu tıklanamadı");
+    throw new Error("⛔ Submit / Kaydol butonu tıklanamadı");
   }
 
-  await new Promise((r) => setTimeout(r, 700));
-} 
- 
-async function writeToSheet({
-  username,
-  password,
-  usedEmail,
-  mailAppPassword,
-}) {
-  const credentialFile = getRandomCredentialFile();
-
-  console.log("🔑 Kullanılan credential:", path.basename(credentialFile));
-
-  const auth = new GoogleAuth({
-    keyFile: credentialFile,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-
-  const sheets = google.sheets({ version: "v4", auth });
-
-  const value = `${username}-${password}-${usedEmail}-${mailAppPassword}`;
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:A`,
-    valueInputOption: "RAW",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: {
-      values: [[value]],
-    },
-  });
-
-  console.log("📄 Google Sheet'e yazıldı:", value);
+  await new Promise(r => setTimeout(r, 1200));
 }
 
 /* ---------------- MAIN ---------------- */
