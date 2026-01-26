@@ -869,7 +869,7 @@ async function main() {
   });
 
   // 4️⃣ Submit (Kaydol)
-  await sleep(400);
+  await sleep(2000);
   await clickKaydol(page);
  
   // ✅ Onay kodu inputunu bekle
