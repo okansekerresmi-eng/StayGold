@@ -366,6 +366,47 @@ async function clickIleriInstagram(page, timeout = 30000) {
 
   await new Promise(r => setTimeout(r, 1500));
 }
+async function smartType(page, labelTexts, value) {
+  // labelTexts = ["Mobile number or email", "Email", "Telefon numarası veya e-posta", ...]
+  await page.waitForFunction(
+    (labels) => {
+      return [...document.querySelectorAll("input")].some(inp => {
+        const aria = (inp.getAttribute("aria-label") || "").toLowerCase();
+        const ph   = (inp.getAttribute("placeholder") || "").toLowerCase();
+        return labels.some(l => aria.includes(l) || ph.includes(l));
+      });
+    },
+    { timeout: 60000 },
+    labelTexts.map(l => l.toLowerCase())
+  );
+
+  const success = await page.evaluate(
+    (labels, value) => {
+      const inputs = [...document.querySelectorAll("input")];
+
+      const target = inputs.find(inp => {
+        const aria = (inp.getAttribute("aria-label") || "").toLowerCase();
+        const ph   = (inp.getAttribute("placeholder") || "").toLowerCase();
+        return labels.some(l => aria.includes(l) || ph.includes(l));
+      });
+
+      if (!target) return false;
+
+      target.focus();
+      target.value = "";
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+
+      return true;
+    },
+    labelTexts.map(l => l.toLowerCase()),
+    value
+  );
+
+  if (!success) throw new Error("⛔ Input bulunamadı: " + labelTexts.join(" / "));
+
+  await page.keyboard.type(value, { delay: randInt(60, 120) });
+}
+
 async function getEmailFromToken(tokenPath) {
   validateTokenStructure(tokenPath);
 
@@ -695,8 +736,53 @@ async function isInvalidCodeVisible(page) {
       );
   });
 }
+async function selectComboByText(page, labelText, optionText) {
+  await page.waitForFunction(
+    (label) => {
+      return [...document.querySelectorAll("span")]
+        .some(s => (s.innerText || "").trim().toLowerCase() === label.toLowerCase());
+    },
+    { timeout: 60000 },
+    labelText
+  );
 
+  // combobox'a tıkla
+  await page.evaluate((label) => {
+    const span = [...document.querySelectorAll("span")]
+      .find(s => (s.innerText || "").trim().toLowerCase() === label.toLowerCase());
 
+    let el = span;
+    for (let i = 0; i < 10; i++) {
+      if (!el) break;
+      if (el.getAttribute?.("role") === "combobox") {
+        el.click();
+        return;
+      }
+      el = el.parentElement;
+    }
+  }, labelText);
+
+  await sleep(800);
+
+  // option seç
+  await page.waitForFunction(
+    (val) => {
+      return [...document.querySelectorAll("div, span")]
+        .some(e => (e.innerText || "").trim() === val);
+    },
+    { timeout: 30000 },
+    optionText
+  );
+
+  await page.evaluate((val) => {
+    const opt = [...document.querySelectorAll("div, span")]
+      .find(e => (e.innerText || "").trim() === val);
+
+    if (opt) opt.click();
+  }, optionText);
+
+  await sleep(500);
+}
 async function goTo2FA(page) {
   await page.goto(
     "https://accountscenter.instagram.com/password_and_security/two_factor/?theme=dark",
@@ -832,10 +918,18 @@ async function main() {
   await page.reload({ waitUntil: "domcontentloaded" });
   await sleep(2000);
  
-  await clearAndType(page, 'input[name="emailOrPhone"]', email);
-  await clearAndType(page, 'input[name="password"]', PASSWORD_VALUE);
-  await clearAndType(page, 'input[name="fullName"]', fullName);
-  await forceTypeUsername(page, 'input[name="username"]', username);
+  // 📧 Email
+  await smartType(page, ["mobile number or email", "email", "e-posta"], email);
+
+  // 🔑 Password
+  await smartType(page, ["password", "şifre"], PASSWORD_VALUE);
+
+  // 👤 Full name
+  await smartType(page, ["full name", "ad soyad", "name"], fullName);
+
+  // 🧩 Username (combobox olduğu için özel)
+  await smartType(page, ["username", "kullanıcı adı"], username);
+
  
   await page.keyboard.press("Tab");  
  
@@ -856,9 +950,14 @@ async function main() {
   const daySel   = 'select[title="Gün:"], select[title="Day:"]';
   const yearSel  = 'select[title="Yıl:"], select[title="Year:"]';
  
-  await page.select(monthSel, String(randInt(1, 12)));
-  await page.select(daySel, String(randInt(1, 28)));
-  await page.select(yearSel, String(randInt(1985, 2005)));
+  const month = String(randInt(1, 12));
+  const day   = String(randInt(1, 28));
+  const year  = String(randInt(1985, 2005));
+
+  await selectComboByText(page, "Month", month);
+  await selectComboByText(page, "Day", day);
+  await selectComboByText(page, "Year", year);
+
  
   // ✅ Tarihten sonra İleri
   await clickIleri(page);
