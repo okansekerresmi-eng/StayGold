@@ -14,7 +14,7 @@ const SHEET_ID = "1gV9pYAY9yyTNQULP9X64Z2GHJbqLsT7P1SPjqnkqq2M";
 const SHEET_NAME = "imap";
  
 const CREDENTIALS_DIR = path.join(__dirname, "credentials");
- 
+const SPEED = 1.5;
 const NAMES_FILE = path.join(__dirname, "isimler.txt");
  
 const CHROME_PATH =
@@ -26,7 +26,7 @@ const DEBUG_PORT = 9222;
 const randInt = (min, max) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 const choice = (arr) => arr[randInt(0, arr.length - 1)];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms / SPEED));
  
 function runShutdownBat() {
   const batPath = path.join(__dirname, "shut.bat");
@@ -188,7 +188,7 @@ async function clearAndType(page, selector, text) {
     el.value = "";
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }, selector);
-  await page.type(selector, text, { delay: randInt(60, 120) });
+  await page.type(selector, text, { delay: randInt(35, 80) });
 }
  
 async function forceTypeUsername(page, selector, text) {
@@ -206,7 +206,7 @@ async function forceTypeUsername(page, selector, text) {
     el.dispatchEvent(new Event("input", { bubbles: true }));
   }, selector);
  
-  await page.type(selector, text, { delay: randInt(60, 120) });
+  await page.type(selector, text, { delay: randInt(35, 80) });
  
   // son kontrol
   await sleep(600);
@@ -303,7 +303,7 @@ async function enter2FAHumanLike(page, secret) {
 
     // rakam rakam yaz
     for (const ch of token) {
-      await page.keyboard.type(ch, { delay: randInt(80, 140) });
+      await page.keyboard.type(ch, { delay: randInt(45, 90) });
     }
 
     await sleep(300);
@@ -366,46 +366,55 @@ async function clickIleriInstagram(page, timeout = 30000) {
 
   await new Promise(r => setTimeout(r, 1500));
 }
-async function smartType(page, labelTexts, value) {
-  // labelTexts = ["Mobile number or email", "Email", "Telefon numarası veya e-posta", ...]
-  await page.waitForFunction(
-    (labels) => {
-      return [...document.querySelectorAll("input")].some(inp => {
-        const aria = (inp.getAttribute("aria-label") || "").toLowerCase();
-        const ph   = (inp.getAttribute("placeholder") || "").toLowerCase();
-        return labels.some(l => aria.includes(l) || ph.includes(l));
-      });
-    },
-    { timeout: 60000 },
-    labelTexts.map(l => l.toLowerCase())
-  );
+async function fillSignupFormHuman(page, { email, password, fullName, username }) {
+  await page.waitForSelector("input", { timeout: 60000 });
 
-  const success = await page.evaluate(
-    (labels, value) => {
-      const inputs = [...document.querySelectorAll("input")];
+  const inputs = await page.$$eval("input", els => els.map((e, i) => ({
+    idx: i,
+    type: e.type,
+  })));
 
-      const target = inputs.find(inp => {
-        const aria = (inp.getAttribute("aria-label") || "").toLowerCase();
-        const ph   = (inp.getAttribute("placeholder") || "").toLowerCase();
-        return labels.some(l => aria.includes(l) || ph.includes(l));
-      });
+  console.log("🧩 Bulunan inputlar:", inputs);
 
-      if (!target) return false;
+  const allInputs = await page.$$("input");
 
-      target.focus();
-      target.value = "";
-      target.dispatchEvent(new Event("input", { bubbles: true }));
+  if (allInputs.length < 4) {
+    throw new Error("⛔ Yeterli input bulunamadı: " + allInputs.length);
+  }
 
-      return true;
-    },
-    labelTexts.map(l => l.toLowerCase()),
-    value
-  );
+  // 🎯 Instagram yeni UI sırası:
+  // 0 → email
+  // 1 → password
+  // son -2 → full name
+  // son -1 → username
 
-  if (!success) throw new Error("⛔ Input bulunamadı: " + labelTexts.join(" / "));
+  async function humanType(el, text) {
+    await el.click({ clickCount: 3 });
+    await sleep(randInt(300, 600));
 
-  await page.keyboard.type(value, { delay: randInt(60, 120) });
+    for (const ch of text) {
+      await el.type(ch, { delay: randInt(40, 90) });
+    }
+
+    await sleep(randInt(300, 600));
+  }
+
+  console.log("✍️ Email yazılıyor...");
+  await humanType(allInputs[0], email);
+
+  console.log("✍️ Password yazılıyor...");
+  await humanType(allInputs[1], password);
+
+  console.log("✍️ Full name yazılıyor...");
+  await humanType(allInputs[allInputs.length - 2], fullName);
+
+  console.log("✍️ Username yazılıyor...");
+  await humanType(allInputs[allInputs.length - 1], username);
+
+  console.log("✅ Signup form insansı şekilde dolduruldu");
 }
+
+
 
 async function getEmailFromToken(tokenPath) {
   validateTokenStructure(tokenPath);
@@ -822,38 +831,108 @@ async function clickIleriFinal(page, timeout = 60000) {
 
   await new Promise(r => setTimeout(r, 1500));
 }
- 
+async function selectByArrow(page, labelText, min, max) {
+  console.log("🎯 Açılıyor:", labelText);
+
+  // combobox'u bul ve tıkla
+  await page.waitForFunction(
+    (label) => {
+      return [...document.querySelectorAll("span")]
+        .some(s => (s.innerText || "").trim() === label);
+    },
+    { timeout: 60000 },
+    labelText
+  );
+
+  await page.evaluate((label) => {
+    const span = [...document.querySelectorAll("span")]
+      .find(s => (s.innerText || "").trim() === label);
+
+    let el = span;
+    for (let i = 0; i < 10; i++) {
+      if (!el) break;
+      if (el.getAttribute?.("role") === "combobox") {
+        el.click();
+        return;
+      }
+      el = el.parentElement;
+    }
+  }, labelText);
+
+  await sleep(randInt(500, 900));
+
+  // 🎲 kaç kere arrow down basılacak
+  const count = randInt(min, max);
+  console.log(`⬇️ ${labelText} için ${count} kez ArrowDown`);
+
+  for (let i = 0; i < count; i++) {
+    await page.keyboard.press("ArrowDown");
+    await sleep(randInt(35, 120));
+  }
+
+  await sleep(randInt(300, 600));
+  await page.keyboard.press("Enter");
+
+  await sleep(randInt(600, 1000));
+}
+
 async function clickKaydol(page, timeout = 45000) {
-  const labels = ["Kaydol", "Sign up", "Sign Up"];
- 
+  const labels = ["Kaydol", "Sign up", "Sign Up", "Submit"];
+
   await page.waitForFunction(
     (labels) => {
-      const btns = [...document.querySelectorAll("button")];
-      return btns.some(
+      const nodes = [
+        ...document.querySelectorAll("button, span, div, [role='button'], a"),
+      ];
+      return nodes.some(
         (b) =>
-          labels.includes(b.innerText.trim()) &&
-          !b.disabled &&
+          labels.includes((b.innerText || "").trim()) &&
           b.offsetParent !== null
       );
     },
     { timeout },
     labels
   );
- 
-  await page.evaluate((labels) => {
-    const btn = [...document.querySelectorAll("button")].find(
+
+  const clicked = await page.evaluate((labels) => {
+    const nodes = [
+      ...document.querySelectorAll("button, span, div, [role='button'], a"),
+    ];
+
+    const el = nodes.find(
       (b) =>
-        labels.includes(b.innerText.trim()) &&
-        !b.disabled &&
+        labels.includes((b.innerText || "").trim()) &&
         b.offsetParent !== null
     );
-    btn.scrollIntoView({ block: "center" });
-    btn.click();
+
+    if (!el) return false;
+
+    let target = el;
+    for (let i = 0; i < 8; i++) {
+      if (!target) break;
+      if (
+        target.tagName === "DIV" ||
+        target.tagName === "BUTTON" ||
+        target.getAttribute("role") === "button" ||
+        target.tagName === "A" ||
+        target.tagName === "SPAN"
+      ) {
+        target.scrollIntoView({ block: "center" });
+        target.click();
+        return true;
+      }
+      target = target.parentElement;
+    }
+
+    return false;
   }, labels);
- 
+
+  if (!clicked) {
+    throw new Error("⛔ Kaydol / Submit butonu tıklanamadı");
+  }
+
   await new Promise((r) => setTimeout(r, 700));
-}
- 
+} 
  
 async function writeToSheet({
   username,
@@ -919,51 +998,36 @@ async function main() {
   await sleep(2000);
  
   // 📧 Email
-  await smartType(page, ["mobile number or email", "email", "e-posta"], email);
+  await fillSignupFormHuman(page, {
+    email,
+    password: PASSWORD_VALUE,
+    fullName,
+    username,
+  });
 
-  // 🔑 Password
-  await smartType(page, ["password", "şifre"], PASSWORD_VALUE);
-
-  // 👤 Full name
-  await smartType(page, ["full name", "ad soyad", "name"], fullName);
-
-  // 🧩 Username (combobox olduğu için özel)
-  await smartType(page, ["username", "kullanıcı adı"], username);
-
- 
   await page.keyboard.press("Tab");  
  
   await new Promise(r => setTimeout(r, 400));
  
   await clickKaydol(page);
  
-  /* ✅ DOĞUM TARİHİ (select'ler gelene kadar bekle) */
-  await page.waitForFunction(() => {
-    return (
-      document.querySelector('select[title="Ay:"], select[title="Month:"]') &&
-      document.querySelector('select[title="Gün:"], select[title="Day:"]') &&
-      document.querySelector('select[title="Yıl:"], select[title="Year:"]')
-    );
-  }, { timeout: 60000 });
- 
-  const monthSel = 'select[title="Ay:"], select[title="Month:"]';
-  const daySel   = 'select[title="Gün:"], select[title="Day:"]';
-  const yearSel  = 'select[title="Yıl:"], select[title="Year:"]';
- 
   const month = String(randInt(1, 12));
   const day   = String(randInt(1, 28));
   const year  = String(randInt(1985, 2005));
 
-  await selectComboByText(page, "Month", month);
-  await selectComboByText(page, "Day", day);
-  await selectComboByText(page, "Year", year);
+  // 🎂 DOĞUM TARİHİ – ARROW DOWN SİSTEMİ (INSANSI)
+
+  await selectByArrow(page, "Month", 1, 12);   // 1–12 arası ay
+  await selectByArrow(page, "Day", 1, 28);     // 1–28 arası gün
+  await selectByArrow(page, "Year", 20, 45);   // 20–45 kere aşağı (1980–2005 civarı)
+
 
  
   // ✅ Tarihten sonra İleri
   await clickIleri(page);
  
   // ✅ Onay kodu inputunu bekle
-  const CONFIRM_SELECTOR = 'input[name="email_confirmation_code"]';
+  const CONFIRM_SELECTOR = 'input[maxlength="6"]';
  
   await page.waitForSelector(CONFIRM_SELECTOR, {
     visible: true,
