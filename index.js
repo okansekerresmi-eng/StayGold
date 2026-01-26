@@ -602,7 +602,63 @@ async function clickInstagramApp(page) {
 
   await sleep(1000);
 }
+async function fillNameUsernameHuman(page, { fullName, username }) {
+  await page.waitForSelector("input", { timeout: 60000 });
 
+  const allInputs = await page.$$("input");
+
+  // yeni UI’de isim ve username en sondaki 2 input
+  const nameInput = allInputs[allInputs.length - 2];
+  const userInput = allInputs[allInputs.length - 1];
+
+  async function humanType(el, text) {
+    await el.click({ clickCount: 3 });
+    await sleep(randInt(200, 400));
+
+    for (const ch of text) {
+      await el.type(ch, { delay: randInt(40, 90) });
+    }
+
+    await sleep(randInt(200, 400));
+  }
+
+  console.log("✍️ Full name yazılıyor...");
+  await humanType(nameInput, fullName);
+
+  console.log("✍️ Username yazılıyor...");
+  await humanType(userInput, username);
+
+  console.log("✅ Name + Username yazıldı");
+}
+
+async function fillEmailPasswordHuman(page, { email, password }) {
+  await page.waitForSelector("input", { timeout: 60000 });
+
+  const allInputs = await page.$$("input");
+
+  if (allInputs.length < 2) {
+    throw new Error("⛔ Email / Password input bulunamadı");
+  }
+
+  async function humanType(el, text) {
+    await el.click({ clickCount: 3 });
+    await sleep(randInt(200, 400));
+
+    for (const ch of text) {
+      await el.type(ch, { delay: randInt(40, 90) });
+    }
+
+    await sleep(randInt(200, 400));
+  }
+
+  console.log("✍️ Email yazılıyor...");
+  await humanType(allInputs[0], email);
+
+  console.log("✍️ Password yazılıyor...");
+  await humanType(allInputs[1], password);
+
+  console.log("✅ Email + Password yazıldı");
+}
 
 async function clickAccountUsername(page, username, timeout = 60000) {
   const uname = username.toLowerCase();
@@ -996,20 +1052,29 @@ async function main() {
   await sleep(2000); // insan gibi kısa bekleme
   await page.reload({ waitUntil: "domcontentloaded" });
   await sleep(2000);
- 
-  // 📧 Email
-  await fillSignupFormHuman(page, {
+  
+  // 1️⃣ Email + Password
+  await fillEmailPasswordHuman(page, {
     email,
     password: PASSWORD_VALUE,
+  });
+
+  // 2️⃣ DOĞUM TARİHİ (SIRA: DAY → MONTH → YEAR)
+
+  await selectByArrow(page, "Day", 1, 28);
+  await selectByArrow(page, "Month", 1, 12);
+  await selectByArrow(page, "Year", 20, 45);
+
+  // 3️⃣ İsim + Username
+  await fillNameUsernameHuman(page, {
     fullName,
     username,
   });
 
-  await page.keyboard.press("Tab");  
- 
-  await new Promise(r => setTimeout(r, 400));
- 
+  // 4️⃣ Submit (Kaydol)
+  await sleep(400);
   await clickKaydol(page);
+
  
   const month = String(randInt(1, 12));
   const day   = String(randInt(1, 28));
