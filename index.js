@@ -16,7 +16,10 @@ const SHEET_NAME = "imap";
 const CREDENTIALS_DIR = path.join(__dirname, "credentials");
 const SPEED = 1.5;
 const NAMES_FILE = path.join(__dirname, "isimler.txt");
- 
+const MONTHS = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December"
+];
 const CHROME_PATH =
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const DEBUG_PORT = 9222;
@@ -562,6 +565,62 @@ async function waitInstagramCodeAPI({
 
   throw new Error("⛔ Gmail API ile belirtilen sürede kod alınamadı");
 }
+async function selectComboByRandomOption(page, labelText, valuesArray) {
+  console.log("🎯 Açılıyor:", labelText);
+
+  // combobox'u aç
+  await page.waitForFunction(
+    (label) => {
+      return [...document.querySelectorAll("span")]
+        .some(s => (s.innerText || "").trim() === label);
+    },
+    { timeout: 60000 },
+    labelText
+  );
+
+  await page.evaluate((label) => {
+    const span = [...document.querySelectorAll("span")]
+      .find(s => (s.innerText || "").trim() === label);
+
+    let el = span;
+    for (let i = 0; i < 10; i++) {
+      if (!el) break;
+      if (el.getAttribute?.("role") === "combobox") {
+        el.click();
+        return;
+      }
+      el = el.parentElement;
+    }
+  }, labelText);
+
+  await sleep(randInt(300, 600));
+
+  // 🎲 rastgele değer seç
+  const value = valuesArray[randInt(0, valuesArray.length - 1)];
+  console.log(`👉 ${labelText} seçiliyor:`, value);
+
+  // option’u bul ve tıkla
+  await page.waitForFunction(
+    (val) => {
+      return [...document.querySelectorAll('[role="option"]')]
+        .some(o => (o.innerText || "").trim() === String(val));
+    },
+    { timeout: 30000 },
+    value
+  );
+
+  await page.evaluate((val) => {
+    const opt = [...document.querySelectorAll('[role="option"]')]
+      .find(o => (o.innerText || "").trim() === String(val));
+
+    if (opt) {
+      opt.scrollIntoView({ block: "center" });
+      opt.click();
+    }
+  }, value);
+
+  await sleep(randInt(400, 800));
+}
 
 async function clickInstagramApp(page) {
   await page.waitForFunction(() => {
@@ -887,50 +946,6 @@ async function clickIleriFinal(page, timeout = 60000) {
 
   await new Promise(r => setTimeout(r, 1500));
 }
-async function selectByArrow(page, labelText, min, max) {
-  console.log("🎯 Açılıyor:", labelText);
-
-  // combobox'u bul ve tıkla
-  await page.waitForFunction(
-    (label) => {
-      return [...document.querySelectorAll("span")]
-        .some(s => (s.innerText || "").trim() === label);
-    },
-    { timeout: 60000 },
-    labelText
-  );
-
-  await page.evaluate((label) => {
-    const span = [...document.querySelectorAll("span")]
-      .find(s => (s.innerText || "").trim() === label);
-
-    let el = span;
-    for (let i = 0; i < 10; i++) {
-      if (!el) break;
-      if (el.getAttribute?.("role") === "combobox") {
-        el.click();
-        return;
-      }
-      el = el.parentElement;
-    }
-  }, labelText);
-
-  await sleep(randInt(500, 900));
-
-  // 🎲 kaç kere arrow down basılacak
-  const count = randInt(min, max);
-  console.log(`⬇️ ${labelText} için ${count} kez ArrowDown`);
-
-  for (let i = 0; i < count; i++) {
-    await page.keyboard.press("ArrowDown");
-    await sleep(randInt(35, 120));
-  }
-
-  await sleep(randInt(300, 600));
-  await page.keyboard.press("Enter");
-
-  await sleep(randInt(600, 1000));
-}
 
 async function clickKaydol(page, timeout = 45000) {
   const labels = ["Kaydol", "Sign up", "Sign Up", "Submit"];
@@ -1060,10 +1075,21 @@ async function main() {
   });
 
   // 2️⃣ DOĞUM TARİHİ (SIRA: DAY → MONTH → YEAR)
+    // 🎂 DOĞUM TARİHİ – OPTION’A TIKLAYARAK (INSANSI)
 
-  await selectByArrow(page, "Day", 1, 28);
-  await selectByArrow(page, "Month", 1, 12);
-  await selectByArrow(page, "Year", 20, 45);
+  // Gün: 1–28
+  const days = Array.from({ length: 28 }, (_, i) => String(i + 1));
+
+  // Yıl: 1982–2004
+  const years = [];
+  for (let y = 1982; y <= 2004; y++) years.push(String(y));
+
+  // Ay
+  await selectComboByRandomOption(page, "Month", MONTHS);
+  await selectComboByRandomOption(page, "Day", days);
+  await selectComboByRandomOption(page, "Year", years);
+
+
 
   // 3️⃣ İsim + Username
   await fillNameUsernameHuman(page, {
@@ -1074,22 +1100,6 @@ async function main() {
   // 4️⃣ Submit (Kaydol)
   await sleep(400);
   await clickKaydol(page);
-
- 
-  const month = String(randInt(1, 12));
-  const day   = String(randInt(1, 28));
-  const year  = String(randInt(1985, 2005));
-
-  // 🎂 DOĞUM TARİHİ – ARROW DOWN SİSTEMİ (INSANSI)
-
-  await selectByArrow(page, "Month", 1, 12);   // 1–12 arası ay
-  await selectByArrow(page, "Day", 1, 28);     // 1–28 arası gün
-  await selectByArrow(page, "Year", 20, 45);   // 20–45 kere aşağı (1980–2005 civarı)
-
-
- 
-  // ✅ Tarihten sonra İleri
-  await clickIleri(page);
  
   // ✅ Onay kodu inputunu bekle
   const CONFIRM_SELECTOR = 'input[maxlength="6"]';
