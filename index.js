@@ -6,7 +6,6 @@ const { spawn } = require("child_process");
 const puppeteer = require("puppeteer-core");
 const { GoogleAuth } = require("google-auth-library");
 const TOKENS_DIR = path.join(__dirname, "tokens");
-const speakeasy = require("speakeasy");
 //////////////////// CONFIG ////////////////////
 const SITE_URL = "https://www.instagram.com/accounts/emailsignup/"; // KAYIT SAYFASI URL
 const PASSWORD_VALUE = "Okanokan10!";
@@ -56,14 +55,6 @@ function runShutdownBat() {
     detached: true,
     stdio: "ignore",
   }).unref();
-}
-
-function get2FACode(secret) {
-  return speakeasy.totp({
-    secret: secret.replace(/\s+/g, ""),
-    encoding: "base32",
-    step: 30
-  });
 } 
 
 function normalizeAscii(str) {
@@ -267,65 +258,41 @@ async function clickBitti(page, timeout = 60000) {
 
   await sleep(1500);
 }
-
-async function enter2FAHumanLike(page, secret) {
-  console.log("🔐 Authenticator kurulumu başlıyor");
+async function enter2FAHumanLike(page, browser, secret) {
+  console.log("🔐 2FA (2fa.live) ile giriliyor");
 
   const inputSelector = 'input[maxlength="6"]';
 
-  // en fazla 2 deneme
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const token = get2FACode(secret);
-    console.log(`🔢 TOTP (${attempt}):`, token);
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    await page.keyboard.press("Enter");
+  await page.waitForSelector(inputSelector, { visible: true });
 
-    await page.waitForSelector(inputSelector, { visible: true });
-    
-    // input'u TAM temizle
-    await page.click(inputSelector);
-    await page.keyboard.down("Control");
-    await page.keyboard.press("A");
-    await page.keyboard.up("Control");
-    await page.keyboard.press("Backspace");
-    await sleep(200);
+  const code = await get2FACodeFrom2FALive(browser, secret);
+  await page.bringToFront();
+  // input'u temizle
+  await page.click(inputSelector);
+  await page.keyboard.down("Control");
+  await page.keyboard.press("A");
+  await page.keyboard.up("Control");
+  await page.keyboard.press("Backspace");
+  await sleep(200);
 
-    // rakam rakam yaz
-    for (const ch of token) {
-      await page.keyboard.type(ch, { delay: randInt(45, 90) });
-    }
-
-    await sleep(300);
-
-    // İleri
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    await page.keyboard.press("Enter");
-
-    // sonucu bekle
-    await sleep(3000);
-
-    const invalid = await isInvalidCodeVisible(page);
-
-    if (!invalid) {
-      console.log("✅ Authenticator kodu kabul edildi");
-      return;
-    }
-
-    console.log("⚠️ Kod reddedildi, yeni TOTP bekleniyor...");
-
-    // ⏱️ yeni time-step gelsin diye bekle
-    await sleep(3500);
+  // kodu insan gibi yaz
+  for (const ch of code) {
+    await page.keyboard.type(ch, { delay: randInt(45, 90) });
   }
 
-  throw new Error("⛔ Authenticator kodu 2 denemede de reddedildi");
+  await sleep(300);
+
+  // Enter
+  await page.keyboard.press("Enter");
+
+  await sleep(3000);
+
+  const invalid = await isInvalidCodeVisible(page);
+  if (invalid) {
+    throw new Error("⛔ 2FA kodu reddedildi (2fa.live)");
+  }
+
+  console.log("✅ 2FA kodu kabul edildi");
 }
 
 async function getEmailFromToken(tokenPath) {
@@ -372,6 +339,29 @@ async function clearGmailInbox(tokenFile) {
   }
 
   console.log("✅ Gmail INBOX tamamen temizlendi");
+}
+async function readClipboardWithRetry(page, retries = 5, delayMs = 400) {
+  for (let i = 1; i <= retries; i++) {
+    const text = await page.evaluate(async () => {
+      try {
+        return await navigator.clipboard.readText();
+      } catch (e) {
+        return "";
+      }
+    });
+
+    const cleaned = (text || "").trim();
+
+    if (/^\d{6}$/.test(cleaned)) {
+      console.log(`📋 Clipboard OK (deneme ${i}):`, cleaned);
+      return cleaned;
+    }
+
+    console.log(`⏳ Clipboard boş / geçersiz (deneme ${i})`);
+    await page.waitForTimeout(delayMs);
+  }
+
+  throw new Error("⛔ Clipboard’tan geçerli 2FA kodu okunamadı");
 }
 
 async function clickIleri(page, timeout = 45000) {
@@ -451,6 +441,37 @@ async function get2FASecret(page, timeout = 60000) {
   console.log("🔐 2FA SECRET:", secret);
   return secret;
 }
+async function get2FACodeFrom2FALive(browser, secret) {
+  console.log("🌐 2fa.live üzerinden TOTP alınıyor...");
+
+  const page = await browser.newPage();
+  await page.goto("https://2fa.live", { waitUntil: "domcontentloaded" });
+
+  // textarea'ya secret yapıştır
+  await page.waitForSelector("#listToken", { visible: true });
+  await page.evaluate((secret) => {
+    document.querySelector("#listToken").value = secret;
+  }, secret);
+
+  // Submit
+  await page.click("#submit");
+
+  // render + hesaplama için kısa bekleme
+  await page.waitForTimeout(1000);
+
+  // Copy Code
+  await page.click("#copy_2fa_btn");
+
+  // 🔁 GÜVENLİ CLIPBOARD OKUMA
+  const code = await readClipboardWithRetry(page, 5, 400);
+
+  console.log("🔢 2FA Kodu (2fa.live):", code);
+
+  await page.close();
+
+  return code;
+}
+
 
 async function waitInstagramCodeAPI({
   tokenFile,
@@ -1000,7 +1021,7 @@ async function main() {
       await clickDevam(page);
 
       const secret = await get2FASecret(page);
-      await enter2FAHumanLike(page, secret);
+      await enter2FAHumanLike(page, browser, secret);
       
       await sleep(3000);
 
