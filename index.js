@@ -30,6 +30,23 @@ const randInt = (min, max) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 const choice = (arr) => arr[randInt(0, arr.length - 1)];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms / SPEED));
+const { exec } = require("child_process");
+
+function resyncSystemTime() {
+  return new Promise((resolve) => {
+    console.log("⏱️ Sistem saati senkronize ediliyor (w32tm /resync)...");
+
+    exec("w32tm /resync", { windowsHide: true }, (err, stdout, stderr) => {
+      if (err) {
+        console.log("⚠️ Saat senkronu başarısız (önemsiz olabilir)");
+        return resolve(false);
+      }
+
+      console.log("✅ Sistem saati senkronize edildi");
+      resolve(true);
+    });
+  });
+}
  
 function runShutdownBat() {
   const batPath = path.join(__dirname, "shut.bat");
@@ -155,6 +172,12 @@ function createOAuthClient(tokenFile) {
 
   auth.setCredentials(JSON.parse(fs.readFileSync(tokenFile)));
   return auth;
+}
+function waitForNextTotpWindow() {
+  const now = Math.floor(Date.now() / 1000);
+  const remaining = 30 - (now % 30);
+  // yeni TOTP penceresinin kesin gelmesi için +1
+  return sleep((remaining + 1) * 1000);
 }
 
  
@@ -843,6 +866,9 @@ async function clickKaydol(page, timeout = 45000) {
 
 /* ---------------- MAIN ---------------- */
 async function main() {
+  // ⏱️ TOTP için kritik
+  await resyncSystemTime();
+
   const tokenFile = getRandomTokenFile();
   const baseEmail = await getEmailFromToken(tokenFile);
   const email = generatePlusEmail(baseEmail);
