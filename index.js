@@ -256,19 +256,20 @@ async function enter2FAHumanLike(page, secret) {
 
   const inputSelector = 'input[maxlength="6"]';
 
-  // ⏱️ VM saat drift’i öldürür → önce sync
-  spawn("cmd.exe", ["/c", "w32tm /resync"]);
-  await sleep(1500);
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    // 🔁 her deneme yeni pencere
-    await waitForNextTotpWindow();
-
+  // en fazla 2 deneme
+  for (let attempt = 1; attempt <= 2; attempt++) {
     const token = get2FACode(secret);
     console.log(`🔢 TOTP (${attempt}):`, token);
+    await page.keyboard.press("Tab");
+    await sleep(150);
+    await page.keyboard.press("Tab");
+    await sleep(150);
+    await page.keyboard.press("Tab");
+    await sleep(150);
+    await page.keyboard.press("Enter");
 
     await page.waitForSelector(inputSelector, { visible: true });
-
+    
     // input'u TAM temizle
     await page.click(inputSelector);
     await page.keyboard.down("Control");
@@ -279,30 +280,35 @@ async function enter2FAHumanLike(page, secret) {
 
     // rakam rakam yaz
     for (const ch of token) {
-      await page.keyboard.type(ch, { delay: randInt(45, 90) });
+      await page.keyboard.type(ch, { delay: randInt(80, 140) });
     }
 
     await sleep(300);
 
-    // submit
+    // İleri
     await page.keyboard.press("Tab");
     await sleep(150);
     await page.keyboard.press("Tab");
     await sleep(150);
     await page.keyboard.press("Enter");
 
+    // sonucu bekle
     await sleep(3000);
 
     const invalid = await isInvalidCodeVisible(page);
+
     if (!invalid) {
       console.log("✅ Authenticator kodu kabul edildi");
       return;
     }
 
-    console.log("⚠️ Kod reddedildi, tekrar denenecek...");
+    console.log("⚠️ Kod reddedildi, yeni TOTP bekleniyor...");
+
+    // ⏱️ yeni time-step gelsin diye bekle
+    await sleep(3500);
   }
 
-  throw new Error("⛔ 2FA kodu tüm denemelerde reddedildi");
+  throw new Error("⛔ Authenticator kodu 2 denemede de reddedildi");
 }
 
 async function getEmailFromToken(tokenPath) {
