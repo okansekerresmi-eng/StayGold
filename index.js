@@ -314,6 +314,42 @@ async function getEmailFromToken(tokenPath) {
   const profile = await gmail.users.getProfile({ userId: "me" });
   return profile.data.emailAddress.toLowerCase();
 }
+async function clearGmailInbox(tokenFile) {
+  console.log("🧹 Gmail INBOX temizleniyor...");
+
+  const auth = createOAuthClient(tokenFile);
+  const gmail = google.gmail({ version: "v1", auth });
+
+  let deleted = 0;
+
+  while (true) {
+    const list = await gmail.users.messages.list({
+      userId: "me",
+      q: "in:inbox",
+      maxResults: 100,
+    });
+
+    const messages = list.data.messages;
+    if (!messages || messages.length === 0) break;
+
+    const ids = messages.map(m => m.id);
+
+    await gmail.users.messages.batchDelete({
+      userId: "me",
+      requestBody: {
+        ids,
+      },
+    });
+
+    deleted += ids.length;
+    console.log(`🗑️ Silinen mail: ${deleted}`);
+
+    // Gmail rate-limit yememek için minik bekleme
+    await sleep(800);
+  }
+
+  console.log("✅ Gmail INBOX tamamen temizlendi");
+}
 
 async function clickIleri(page, timeout = 45000) {
   const labels = ["İleri", "Next", "Continue"];
@@ -813,6 +849,12 @@ async function main() {
   const tokenFile = getRandomTokenFile();
   const baseEmail = await getEmailFromToken(tokenFile);
   const email = generatePlusEmail(baseEmail);
+  // 🧹 KOD BEKLEMEDEN ÖNCE GMAIL TEMİZLE
+  await clearGmailInbox(tokenFile);
+
+  // Gmail tarafının sync olması için kısa bekleme
+  await sleep(3000);
+
   console.log("🔐 Seçilen token:", path.basename(tokenFile));
   console.log("📧 Token Gmail:", baseEmail);
 
