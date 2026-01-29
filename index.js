@@ -742,14 +742,28 @@ async function write2FAToSheet({ username, password, secret }) {
   console.log("📄 2FA Sheet kaydı OK:", value);
 }
 async function isInvalidCodeVisible(page) {
-  return await page.evaluate(() => {
-    return [...document.querySelectorAll("span")]
-      .some(s =>
-        (s.innerText || "").trim() ===
-        "Bu kod doğru değil. Lütfen tekrar dene."
-      );
-  });
+  const needles = [
+    "Bu kod doğru değil. Lütfen tekrar dene.",
+    "This code isn't right. Please try again.",
+    "Invalid code",
+    "code isn't right",
+    "Please try again",
+    "Try again",
+    "wrong code",
+  ].map(s => s.toLowerCase());
+
+  return await page.evaluate((needles) => {
+    const nodes = [...document.querySelectorAll("span, div, p")];
+    return nodes.some(n => {
+      const t = (n.innerText || "").trim().toLowerCase();
+      if (!t) return false;
+      // sadece görünür olanlar
+      const visible = n.offsetParent !== null;
+      return visible && needles.some(x => t.includes(x));
+    });
+  }, needles);
 }
+
 async function goTo2FA(page) {
   await page.goto(
     "https://accountscenter.instagram.com/password_and_security/two_factor/?theme=dark",
