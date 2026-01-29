@@ -41,13 +41,19 @@ function runShutdownBat() {
   }).unref();
 }
 
+function cleanBase32(secret) {
+  return secret
+    .toUpperCase()
+    .replace(/[^A-Z2-7]/g, ""); // boşluk + görünmez char + her şeyi sil
+}
+
 function get2FACode(secret) {
   return speakeasy.totp({
-    secret: secret.replace(/\s+/g, ""),
+    secret: cleanBase32(secret),
     encoding: "base32",
-    step: 30
+    step: 30,
   });
-} 
+}
 
 function normalizeAscii(str) {
   return str
@@ -250,20 +256,19 @@ async function enter2FAHumanLike(page, secret) {
 
   const inputSelector = 'input[maxlength="6"]';
 
-  // en fazla 2 deneme
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  // ⏱️ VM saat drift’i öldürür → önce sync
+  spawn("cmd.exe", ["/c", "w32tm /resync"]);
+  await sleep(1500);
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // 🔁 her deneme yeni pencere
+    await waitForNextTotpWindow();
+
     const token = get2FACode(secret);
     console.log(`🔢 TOTP (${attempt}):`, token);
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    await page.keyboard.press("Tab");
-    await sleep(150);
-    await page.keyboard.press("Enter");
 
     await page.waitForSelector(inputSelector, { visible: true });
-    
+
     // input'u TAM temizle
     await page.click(inputSelector);
     await page.keyboard.down("Control");
@@ -279,30 +284,25 @@ async function enter2FAHumanLike(page, secret) {
 
     await sleep(300);
 
-    // İleri
+    // submit
     await page.keyboard.press("Tab");
     await sleep(150);
     await page.keyboard.press("Tab");
     await sleep(150);
     await page.keyboard.press("Enter");
 
-    // sonucu bekle
     await sleep(3000);
 
     const invalid = await isInvalidCodeVisible(page);
-
     if (!invalid) {
       console.log("✅ Authenticator kodu kabul edildi");
       return;
     }
 
-    console.log("⚠️ Kod reddedildi, yeni TOTP bekleniyor...");
-
-    // ⏱️ yeni time-step gelsin diye bekle
-    await sleep(3500);
+    console.log("⚠️ Kod reddedildi, tekrar denenecek...");
   }
 
-  throw new Error("⛔ Authenticator kodu 2 denemede de reddedildi");
+  throw new Error("⛔ 2FA kodu tüm denemelerde reddedildi");
 }
 
 async function getEmailFromToken(tokenPath) {
@@ -365,20 +365,34 @@ async function clickIleri(page, timeout = 45000) {
 
   await new Promise(r => setTimeout(r, 1200));
 }
+async function waitForNextTotpWindow(step = 30, safetyMs = 1200) {
+  const now = Date.now();
+  const msInStep = step * 1000;
+  const msToNext = msInStep - (now % msInStep);
+  await sleep(msToNext + safetyMs);
+}
 
 async function get2FASecret(page, timeout = 60000) {
-  // Base32 pattern: QQUP VJPB 3WKP EN4Z GCQO 4F42 LJ2P 7E62
   await page.waitForFunction(() => {
     return [...document.querySelectorAll("span")]
-      .some(el => /^[A-Z2-7 ]{16,}$/.test((el.innerText || "").trim()));
+      .some(el => {
+        const t = (el.innerText || "").trim().replace(/\s/g, "");
+        return /^[A-Z2-7]{32,}$/.test(t);
+      });
   }, { timeout });
 
   const secret = await page.evaluate(() => {
     const spans = [...document.querySelectorAll("span")];
+
     for (const s of spans) {
-      const t = (s.innerText || "").trim();
-      const cleaned = t.replace(/\s/g, "");
-      if (/^[A-Z2-7]{16,}$/.test(cleaned)) {
+      const raw = (s.innerText || "").trim();
+      const cleaned = raw.replace(/\s/g, "");
+
+      if (
+        /^[A-Z2-7]{32,}$/.test(cleaned) &&           // 🔥 gerçek secret
+        !raw.toLowerCase().includes("example") &&
+        !raw.toLowerCase().includes("örnek")
+      ) {
         return cleaned;
       }
     }
@@ -386,12 +400,15 @@ async function get2FASecret(page, timeout = 60000) {
   });
 
   if (!secret) {
-    throw new Error("⛔ 2FA secret span içinden bulunamadı");
+    throw new Error("⛔ 2FA secret bulunamadı");
   }
 
-  console.log("🔐 2FA SECRET:", secret);
+  console.log("🔐 2FA SECRET (RAW):", secret);
+  console.log("🔐 2FA SECRET (CLEAN):", cleanBase32(secret));
+
   return secret;
 }
+
 
 async function waitInstagramCodeAPI({
   tokenFile,
@@ -743,21 +760,17 @@ async function write2FAToSheet({ username, password, secret }) {
 }
 async function isInvalidCodeVisible(page) {
   const needles = [
-    "Bu kod doğru değil. Lütfen tekrar dene.",
-    "This code isn't right. Please try again.",
-    "Invalid code",
-    "code isn't right",
-    "Please try again",
-    "Try again",
+    "bu kod doğru değil",
+    "this code isn't right",
+    "invalid code",
+    "try again",
     "wrong code",
-  ].map(s => s.toLowerCase());
+  ];
 
   return await page.evaluate((needles) => {
     const nodes = [...document.querySelectorAll("span, div, p")];
     return nodes.some(n => {
-      const t = (n.innerText || "").trim().toLowerCase();
-      if (!t) return false;
-      // sadece görünür olanlar
+      const t = (n.innerText || "").toLowerCase();
       const visible = n.offsetParent !== null;
       return visible && needles.some(x => t.includes(x));
     });
