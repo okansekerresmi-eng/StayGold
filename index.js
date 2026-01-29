@@ -41,19 +41,13 @@ function runShutdownBat() {
   }).unref();
 }
 
-function cleanBase32(secret) {
-  return secret
-    .toUpperCase()
-    .replace(/[^A-Z2-7]/g, ""); // boşluk + görünmez char + her şeyi sil
-}
-
 function get2FACode(secret) {
   return speakeasy.totp({
-    secret: cleanBase32(secret),
+    secret: secret.replace(/\s+/g, ""),
     encoding: "base32",
-    step: 30,
+    step: 30
   });
-}
+} 
 
 function normalizeAscii(str) {
   return str
@@ -280,7 +274,7 @@ async function enter2FAHumanLike(page, secret) {
 
     // rakam rakam yaz
     for (const ch of token) {
-      await page.keyboard.type(ch, { delay: randInt(80, 140) });
+      await page.keyboard.type(ch, { delay: randInt(45, 90) });
     }
 
     await sleep(300);
@@ -371,34 +365,20 @@ async function clickIleri(page, timeout = 45000) {
 
   await new Promise(r => setTimeout(r, 1200));
 }
-async function waitForNextTotpWindow(step = 30, safetyMs = 1200) {
-  const now = Date.now();
-  const msInStep = step * 1000;
-  const msToNext = msInStep - (now % msInStep);
-  await sleep(msToNext + safetyMs);
-}
 
 async function get2FASecret(page, timeout = 60000) {
+  // Base32 pattern: QQUP VJPB 3WKP EN4Z GCQO 4F42 LJ2P 7E62
   await page.waitForFunction(() => {
     return [...document.querySelectorAll("span")]
-      .some(el => {
-        const t = (el.innerText || "").trim().replace(/\s/g, "");
-        return /^[A-Z2-7]{32,}$/.test(t);
-      });
+      .some(el => /^[A-Z2-7 ]{16,}$/.test((el.innerText || "").trim()));
   }, { timeout });
 
   const secret = await page.evaluate(() => {
     const spans = [...document.querySelectorAll("span")];
-
     for (const s of spans) {
-      const raw = (s.innerText || "").trim();
-      const cleaned = raw.replace(/\s/g, "");
-
-      if (
-        /^[A-Z2-7]{32,}$/.test(cleaned) &&           // 🔥 gerçek secret
-        !raw.toLowerCase().includes("example") &&
-        !raw.toLowerCase().includes("örnek")
-      ) {
+      const t = (s.innerText || "").trim();
+      const cleaned = t.replace(/\s/g, "");
+      if (/^[A-Z2-7]{16,}$/.test(cleaned)) {
         return cleaned;
       }
     }
@@ -406,15 +386,12 @@ async function get2FASecret(page, timeout = 60000) {
   });
 
   if (!secret) {
-    throw new Error("⛔ 2FA secret bulunamadı");
+    throw new Error("⛔ 2FA secret span içinden bulunamadı");
   }
 
-  console.log("🔐 2FA SECRET (RAW):", secret);
-  console.log("🔐 2FA SECRET (CLEAN):", cleanBase32(secret));
-
+  console.log("🔐 2FA SECRET:", secret);
   return secret;
 }
-
 
 async function waitInstagramCodeAPI({
   tokenFile,
@@ -765,24 +742,14 @@ async function write2FAToSheet({ username, password, secret }) {
   console.log("📄 2FA Sheet kaydı OK:", value);
 }
 async function isInvalidCodeVisible(page) {
-  const needles = [
-    "bu kod doğru değil",
-    "this code isn't right",
-    "invalid code",
-    "try again",
-    "wrong code",
-  ];
-
-  return await page.evaluate((needles) => {
-    const nodes = [...document.querySelectorAll("span, div, p")];
-    return nodes.some(n => {
-      const t = (n.innerText || "").toLowerCase();
-      const visible = n.offsetParent !== null;
-      return visible && needles.some(x => t.includes(x));
-    });
-  }, needles);
+  return await page.evaluate(() => {
+    return [...document.querySelectorAll("span")]
+      .some(s =>
+        (s.innerText || "").trim() ===
+        "This code isn't right. Please try again."
+      );
+  });
 }
-
 async function goTo2FA(page) {
   await page.goto(
     "https://accountscenter.instagram.com/password_and_security/two_factor/?theme=dark",
