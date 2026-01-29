@@ -6,6 +6,7 @@ const { spawn } = require("child_process");
 const puppeteer = require("puppeteer-core");
 const { GoogleAuth } = require("google-auth-library");
 const TOKENS_DIR = path.join(__dirname, "tokens");
+const speakeasy = require("speakeasy");
 //////////////////// CONFIG ////////////////////
 const SITE_URL = "https://www.instagram.com/accounts/emailsignup/"; // KAYIT SAYFASI URL
 const PASSWORD_VALUE = "Okanokan10!";
@@ -38,7 +39,21 @@ function runShutdownBat() {
     detached: true,
     stdio: "ignore",
   }).unref();
-} 
+}
+
+function cleanBase32(secret) {
+  return secret
+    .toUpperCase()
+    .replace(/[^A-Z2-7]/g, ""); // boşluk + görünmez char + her şeyi sil
+}
+
+function get2FACode(secret) {
+  return speakeasy.totp({
+    secret: cleanBase32(secret),
+    encoding: "base32",
+    step: 30,
+  });
+}
 
 function normalizeAscii(str) {
   return str
@@ -147,12 +162,6 @@ function createOAuthClient(tokenFile) {
   auth.setCredentials(JSON.parse(fs.readFileSync(tokenFile)));
   return auth;
 }
-function waitForNextTotpWindow() {
-  const now = Math.floor(Date.now() / 1000);
-  const remaining = 30 - (now % 30);
-  // yeni TOTP penceresinin kesin gelmesi için +1
-  return sleep((remaining + 1) * 1000);
-}
 
  
 function launchChromeDebug() {
@@ -241,41 +250,65 @@ async function clickBitti(page, timeout = 60000) {
 
   await sleep(1500);
 }
-async function enter2FAHumanLike(page, browser, secret) {
-  console.log("🔐 2FA (2fa.live) ile giriliyor");
+
+async function enter2FAHumanLike(page, secret) {
+  console.log("🔐 Authenticator kurulumu başlıyor");
 
   const inputSelector = 'input[maxlength="6"]';
 
-  await page.waitForSelector(inputSelector, { visible: true });
+  // en fazla 2 deneme
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const token = get2FACode(secret);
+    console.log(`🔢 TOTP (${attempt}):`, token);
+    await page.keyboard.press("Tab");
+    await sleep(150);
+    await page.keyboard.press("Tab");
+    await sleep(150);
+    await page.keyboard.press("Tab");
+    await sleep(150);
+    await page.keyboard.press("Enter");
 
-  const code = await get2FACodeFrom2FALive(browser, secret);
-  await page.bringToFront();
-  // input'u temizle
-  await page.click(inputSelector);
-  await page.keyboard.down("Control");
-  await page.keyboard.press("A");
-  await page.keyboard.up("Control");
-  await page.keyboard.press("Backspace");
-  await sleep(200);
+    await page.waitForSelector(inputSelector, { visible: true });
+    
+    // input'u TAM temizle
+    await page.click(inputSelector);
+    await page.keyboard.down("Control");
+    await page.keyboard.press("A");
+    await page.keyboard.up("Control");
+    await page.keyboard.press("Backspace");
+    await sleep(200);
 
-  // kodu insan gibi yaz
-  for (const ch of code) {
-    await page.keyboard.type(ch, { delay: randInt(45, 90) });
+    // rakam rakam yaz
+    for (const ch of token) {
+      await page.keyboard.type(ch, { delay: randInt(80, 140) });
+    }
+
+    await sleep(300);
+
+    // İleri
+    await page.keyboard.press("Tab");
+    await sleep(150);
+    await page.keyboard.press("Tab");
+    await sleep(150);
+    await page.keyboard.press("Enter");
+
+    // sonucu bekle
+    await sleep(3000);
+
+    const invalid = await isInvalidCodeVisible(page);
+
+    if (!invalid) {
+      console.log("✅ Authenticator kodu kabul edildi");
+      return;
+    }
+
+    console.log("⚠️ Kod reddedildi, yeni TOTP bekleniyor...");
+
+    // ⏱️ yeni time-step gelsin diye bekle
+    await sleep(3500);
   }
 
-  await sleep(300);
-
-  // Enter
-  await page.keyboard.press("Enter");
-
-  await sleep(3000);
-
-  const invalid = await isInvalidCodeVisible(page);
-  if (invalid) {
-    throw new Error("⛔ 2FA kodu reddedildi (2fa.live)");
-  }
-
-  console.log("✅ 2FA kodu kabul edildi");
+  throw new Error("⛔ Authenticator kodu 2 denemede de reddedildi");
 }
 
 async function getEmailFromToken(tokenPath) {
@@ -286,65 +319,6 @@ async function getEmailFromToken(tokenPath) {
 
   const profile = await gmail.users.getProfile({ userId: "me" });
   return profile.data.emailAddress.toLowerCase();
-}
-async function clearGmailInbox(tokenFile) {
-  console.log("🧹 Gmail INBOX temizleniyor...");
-
-  const auth = createOAuthClient(tokenFile);
-  const gmail = google.gmail({ version: "v1", auth });
-
-  let deleted = 0;
-
-  while (true) {
-    const list = await gmail.users.messages.list({
-      userId: "me",
-      q: "in:inbox",
-      maxResults: 100,
-    });
-
-    const messages = list.data.messages;
-    if (!messages || messages.length === 0) break;
-
-    const ids = messages.map(m => m.id);
-
-    await gmail.users.messages.batchDelete({
-      userId: "me",
-      requestBody: {
-        ids,
-      },
-    });
-
-    deleted += ids.length;
-    console.log(`🗑️ Silinen mail: ${deleted}`);
-
-    // Gmail rate-limit yememek için minik bekleme
-    await sleep(800);
-  }
-
-  console.log("✅ Gmail INBOX tamamen temizlendi");
-}
-async function readClipboardWithRetry(page, retries = 5, delayMs = 400) {
-  for (let i = 1; i <= retries; i++) {
-    const text = await page.evaluate(async () => {
-      try {
-        return await navigator.clipboard.readText();
-      } catch (e) {
-        return "";
-      }
-    });
-
-    const cleaned = (text || "").trim();
-
-    if (/^\d{6}$/.test(cleaned)) {
-      console.log(`📋 Clipboard OK (deneme ${i}):`, cleaned);
-      return cleaned;
-    }
-
-    console.log(`⏳ Clipboard boş / geçersiz (deneme ${i})`);
-    await page.waitForTimeout(delayMs);
-  }
-
-  throw new Error("⛔ Clipboard’tan geçerli 2FA kodu okunamadı");
 }
 
 async function clickIleri(page, timeout = 45000) {
@@ -397,20 +371,34 @@ async function clickIleri(page, timeout = 45000) {
 
   await new Promise(r => setTimeout(r, 1200));
 }
+async function waitForNextTotpWindow(step = 30, safetyMs = 1200) {
+  const now = Date.now();
+  const msInStep = step * 1000;
+  const msToNext = msInStep - (now % msInStep);
+  await sleep(msToNext + safetyMs);
+}
 
 async function get2FASecret(page, timeout = 60000) {
-  // Base32 pattern: QQUP VJPB 3WKP EN4Z GCQO 4F42 LJ2P 7E62
   await page.waitForFunction(() => {
     return [...document.querySelectorAll("span")]
-      .some(el => /^[A-Z2-7 ]{16,}$/.test((el.innerText || "").trim()));
+      .some(el => {
+        const t = (el.innerText || "").trim().replace(/\s/g, "");
+        return /^[A-Z2-7]{32,}$/.test(t);
+      });
   }, { timeout });
 
   const secret = await page.evaluate(() => {
     const spans = [...document.querySelectorAll("span")];
+
     for (const s of spans) {
-      const t = (s.innerText || "").trim();
-      const cleaned = t.replace(/\s/g, "");
-      if (/^[A-Z2-7]{16,}$/.test(cleaned)) {
+      const raw = (s.innerText || "").trim();
+      const cleaned = raw.replace(/\s/g, "");
+
+      if (
+        /^[A-Z2-7]{32,}$/.test(cleaned) &&           // 🔥 gerçek secret
+        !raw.toLowerCase().includes("example") &&
+        !raw.toLowerCase().includes("örnek")
+      ) {
         return cleaned;
       }
     }
@@ -418,41 +406,13 @@ async function get2FASecret(page, timeout = 60000) {
   });
 
   if (!secret) {
-    throw new Error("⛔ 2FA secret span içinden bulunamadı");
+    throw new Error("⛔ 2FA secret bulunamadı");
   }
 
-  console.log("🔐 2FA SECRET:", secret);
+  console.log("🔐 2FA SECRET (RAW):", secret);
+  console.log("🔐 2FA SECRET (CLEAN):", cleanBase32(secret));
+
   return secret;
-}
-async function get2FACodeFrom2FALive(browser, secret) {
-  console.log("🌐 2fa.live üzerinden TOTP alınıyor...");
-
-  const page = await browser.newPage();
-  await page.goto("https://2fa.live", { waitUntil: "domcontentloaded" });
-
-  // textarea'ya secret yapıştır
-  await page.waitForSelector("#listToken", { visible: true });
-  await page.evaluate((secret) => {
-    document.querySelector("#listToken").value = secret;
-  }, secret);
-
-  // Submit
-  await page.click("#submit");
-
-  // render + hesaplama için kısa bekleme
-  await page.waitForTimeout(1000);
-
-  // Copy Code
-  await page.click("#copy_2fa_btn");
-
-  // 🔁 GÜVENLİ CLIPBOARD OKUMA
-  const code = await readClipboardWithRetry(page, 5, 400);
-
-  console.log("🔢 2FA Kodu (2fa.live):", code);
-
-  await page.close();
-
-  return code;
 }
 
 
@@ -460,21 +420,26 @@ async function waitInstagramCodeAPI({
   tokenFile,
   timeoutMs = 60000,
   pollMs = 3000,
+  maxAgeMinutes = 3,
 } = {}) {
   const auth = createOAuthClient(tokenFile);
+
+  console.log("🔐 Kullanılan token:", path.basename(tokenFile));
+
   const gmail = google.gmail({ version: "v1", auth });
+  const profile = await gmail.users.getProfile({ userId: "me" });
+  console.log("📧 Token Gmail:", profile.data.emailAddress);
 
   const start = Date.now();
-  const maxAgeMs = 1 * 60 * 1000; // ✅ sadece SON 1 DAKİKA
+  const maxAgeMs = maxAgeMinutes * 60 * 1000;
 
-  console.log("📡 Instagram doğrulama kodu bekleniyor...");
+  console.log("📡 Gmail API ile Instagram kodu bekleniyor (proxysiz)...");
 
   while (Date.now() - start < timeoutMs) {
     const list = await gmail.users.messages.list({
       userId: "me",
-      // ✅ SADECE KOD MAİLLERİ
-      q: 'from:no-reply@mail.instagram.com subject:(code OR confirmation)',
-      maxResults: 5,
+      q: "from:no-reply@mail.instagram.com OR subject:Instagram",
+      maxResults: 10,
     });
 
     if (list.data.messages) {
@@ -482,39 +447,37 @@ async function waitInstagramCodeAPI({
         const msg = await gmail.users.messages.get({
           userId: "me",
           id: m.id,
-          format: "metadata",
-          metadataHeaders: ["Subject"],
+          format: "full",
         });
 
         const mailTime = Number(msg.data.internalDate);
-        if (Date.now() - mailTime > maxAgeMs) continue; // ❌ eski mail
+        if (Date.now() - mailTime > maxAgeMs) continue;
 
+        const headers = msg.data.payload.headers || [];
         const subject =
-          msg.data.payload.headers.find(h => h.name === "Subject")?.value || "";
+          headers.find(h => h.name === "Subject")?.value || "";
 
-        // ✅ SADECE SUBJECT
-        const match = subject.match(/\b\d{6}\b/);
-        if (!match) continue;
+        const subjectMatch = subject.match(/\b\d{6}\b/);
+        if (subjectMatch) return subjectMatch[0];
 
-        const code = match[0];
+        let body = "";
+        const walk = (part) => {
+          if (part.body?.data)
+            body += decodeBase64(part.body.data);
+          if (part.parts) part.parts.forEach(walk);
+        };
+        walk(msg.data.payload);
 
-        // ⛔ HARD BLOCK
-        if (code === "262626") {
-          console.log("⚠️ Fake code 262626 atlandı");
-          continue;
-        }
-
-        console.log("✅ Gerçek kod alındı:", code);
-        return code;
+        const bodyMatch = body.match(/\b\d{6}\b/);
+        if (bodyMatch) return bodyMatch[0];
       }
     }
 
     await sleep(pollMs);
   }
 
-  throw new Error("⛔ Sürede Instagram doğrulama kodu gelmedi");
+  throw new Error("⛔ Gmail API ile belirtilen sürede kod alınamadı");
 }
-
 async function selectComboByRandomOption(page, labelText, valuesArray) {
   console.log("🎯 Açılıyor:", labelText);
 
@@ -802,14 +765,29 @@ async function write2FAToSheet({ username, password, secret }) {
   console.log("📄 2FA Sheet kaydı OK:", value);
 }
 async function isInvalidCodeVisible(page) {
-  return await page.evaluate(() => {
-    return [...document.querySelectorAll("span")]
-      .some(s =>
-        (s.innerText || "").trim() ===
-        "This code isn't right. Please try again."
-      );
-  });
+  const needles = [
+    "Bu kod doğru değil. Lütfen tekrar dene.",
+    "This code isn't right. Please try again.",
+    "Invalid code",
+    "code isn't right",
+    "Please try again",
+    "Try again",
+    "wrong code",
+  ].map(s => s.toLowerCase());
+
+  return await page.evaluate((needles) => {
+    const nodes = [...document.querySelectorAll("span, div, p")];
+    return nodes.some(n => {
+      const t = (n.innerText || "").trim().toLowerCase();
+      if (!t) return false;
+      // sadece görünür olanlar
+      const visible = n.offsetParent !== null;
+      return visible && needles.some(x => t.includes(x));
+    });
+  }, needles);
 }
+
+
 async function goTo2FA(page) {
   await page.goto(
     "https://accountscenter.instagram.com/password_and_security/two_factor/?theme=dark",
@@ -870,7 +848,6 @@ async function clickKaydol(page, timeout = 45000) {
 
 /* ---------------- MAIN ---------------- */
 async function main() {
-
   const tokenFile = getRandomTokenFile();
   const baseEmail = await getEmailFromToken(tokenFile);
   const email = generatePlusEmail(baseEmail);
@@ -1002,7 +979,7 @@ async function main() {
       await clickDevam(page);
 
       const secret = await get2FASecret(page);
-      await enter2FAHumanLike(page, browser, secret);
+      await enter2FAHumanLike(page, secret);
       
       await sleep(3000);
 
