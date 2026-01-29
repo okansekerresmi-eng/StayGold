@@ -433,26 +433,21 @@ async function waitInstagramCodeAPI({
   tokenFile,
   timeoutMs = 60000,
   pollMs = 3000,
-  maxAgeMinutes = 3,
 } = {}) {
   const auth = createOAuthClient(tokenFile);
-
-  console.log("🔐 Kullanılan token:", path.basename(tokenFile));
-
   const gmail = google.gmail({ version: "v1", auth });
-  const profile = await gmail.users.getProfile({ userId: "me" });
-  console.log("📧 Token Gmail:", profile.data.emailAddress);
 
   const start = Date.now();
-  const maxAgeMs = maxAgeMinutes * 60 * 1000;
+  const maxAgeMs = 1 * 60 * 1000; // ✅ sadece SON 1 DAKİKA
 
-  console.log("📡 Gmail API ile Instagram kodu bekleniyor (proxysiz)...");
+  console.log("📡 Instagram doğrulama kodu bekleniyor...");
 
   while (Date.now() - start < timeoutMs) {
     const list = await gmail.users.messages.list({
       userId: "me",
-      q: "from:no-reply@mail.instagram.com OR subject:Instagram",
-      maxResults: 10,
+      // ✅ SADECE KOD MAİLLERİ
+      q: 'from:no-reply@mail.instagram.com subject:(code OR confirmation)',
+      maxResults: 5,
     });
 
     if (list.data.messages) {
@@ -460,37 +455,39 @@ async function waitInstagramCodeAPI({
         const msg = await gmail.users.messages.get({
           userId: "me",
           id: m.id,
-          format: "full",
+          format: "metadata",
+          metadataHeaders: ["Subject"],
         });
 
         const mailTime = Number(msg.data.internalDate);
-        if (Date.now() - mailTime > maxAgeMs) continue;
+        if (Date.now() - mailTime > maxAgeMs) continue; // ❌ eski mail
 
-        const headers = msg.data.payload.headers || [];
         const subject =
-          headers.find(h => h.name === "Subject")?.value || "";
+          msg.data.payload.headers.find(h => h.name === "Subject")?.value || "";
 
-        const subjectMatch = subject.match(/\b\d{6}\b/);
-        if (subjectMatch) return subjectMatch[0];
+        // ✅ SADECE SUBJECT
+        const match = subject.match(/\b\d{6}\b/);
+        if (!match) continue;
 
-        let body = "";
-        const walk = (part) => {
-          if (part.body?.data)
-            body += decodeBase64(part.body.data);
-          if (part.parts) part.parts.forEach(walk);
-        };
-        walk(msg.data.payload);
+        const code = match[0];
 
-        const bodyMatch = body.match(/\b\d{6}\b/);
-        if (bodyMatch) return bodyMatch[0];
+        // ⛔ HARD BLOCK
+        if (code === "262626") {
+          console.log("⚠️ Fake code 262626 atlandı");
+          continue;
+        }
+
+        console.log("✅ Gerçek kod alındı:", code);
+        return code;
       }
     }
 
     await sleep(pollMs);
   }
 
-  throw new Error("⛔ Gmail API ile belirtilen sürede kod alınamadı");
+  throw new Error("⛔ Sürede Instagram doğrulama kodu gelmedi");
 }
+
 async function selectComboByRandomOption(page, labelText, valuesArray) {
   console.log("🎯 Açılıyor:", labelText);
 
@@ -849,12 +846,6 @@ async function main() {
   const tokenFile = getRandomTokenFile();
   const baseEmail = await getEmailFromToken(tokenFile);
   const email = generatePlusEmail(baseEmail);
-  // 🧹 KOD BEKLEMEDEN ÖNCE GMAIL TEMİZLE
-  await clearGmailInbox(tokenFile);
-
-  // Gmail tarafının sync olması için kısa bekleme
-  await sleep(3000);
-
   console.log("🔐 Seçilen token:", path.basename(tokenFile));
   console.log("📧 Token Gmail:", baseEmail);
 
