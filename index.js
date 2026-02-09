@@ -632,43 +632,69 @@ async function fillEmailPasswordHuman(page, { email, password }) {
   console.log("✅ Email + Password yazıldı");
 }
 
-async function clickAccountUsername(page, username, timeout = 60000) {
-  const uname = username.toLowerCase();
+async function clickAccountUsername(page, username, {
+  retries = 6,
+  retryWaitMs = 2000,
+} = {}) {
+  const uname = String(username).trim().toLowerCase();
 
-  await page.waitForFunction(
-    (uname) => {
-      return [...document.querySelectorAll("div, span, a")]
-        .some(el => (el.innerText || "").trim().toLowerCase() === uname);
-    },
-    { timeout },
-    uname
-  );
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    console.log(`👤 Username kontrol ${attempt}/${retries}: ${username}`);
 
-  const clicked = await page.evaluate((uname) => {
-    const el = [...document.querySelectorAll("div, span, a")]
-      .find(e => (e.innerText || "").trim().toLowerCase() === uname);
+    const clicked = await page.evaluate((uname) => {
+      const norm = (t) => (t || "").trim().toLowerCase();
 
-    if (!el) return false;
+      const nodes = [
+        ...document.querySelectorAll("a, button, div, span, [role='button']")
+      ];
 
-    let target = el;
-    for (let i = 0; i < 5; i++) {
-      if (!target) break;
-      if (target.tagName === "DIV" || target.tagName === "A") {
-        target.scrollIntoView({ block: "center" });
-        target.click();
-        return true;
+      // birebir eşleşme
+      let el = nodes.find(n => norm(n.innerText) === uname);
+
+      // bazen ufak fark olabiliyor
+      if (!el) el = nodes.find(n => norm(n.innerText).includes(uname));
+
+      if (!el) return false;
+
+      let target = el;
+      for (let i = 0; i < 10; i++) {
+        if (!target || target === document.body) break;
+
+        const role = target.getAttribute?.("role");
+        const clickable =
+          target.tagName === "A" ||
+          target.tagName === "BUTTON" ||
+          role === "button" ||
+          target.onclick ||
+          target.getAttribute?.("tabindex") !== null;
+
+        if (clickable) {
+          target.click();
+          return true;
+        }
+
+        target = target.parentElement;
       }
-      target = target.parentElement;
-    }
-    return false;
-  }, uname);
 
-  if (!clicked) {
-    throw new Error("⛔ Kullanıcı adına tıklanamadı: " + username);
+      // son çare
+      el.click();
+      return true;
+    }, uname);
+
+    if (clicked) {
+      console.log("✅ Username tıklandı:", username);
+      await sleep(1200);
+      return true;
+    }
+
+    // sadece bekle → scroll YOK
+    await sleep(retryWaitMs);
   }
 
-  await sleep(1500);
+  console.log("⚠️ Username bulunamadı / tıklanmadı (muhtemelen zaten seçili):", username);
+  return false;
 }
+
 
 
 async function clickDevam(page, timeout = 60000) {
@@ -974,7 +1000,8 @@ async function main() {
         return;
       }
 
-      await clickAccountUsername(page, username);
+      await clickAccountUsername(page, username, { retries: 7, retryWaitMs: 2200 });
+      // tıklanmasa bile (zaten seçiliyse) akış devam etsin
       await clickInstagramApp(page);
       await clickDevam(page);
 
