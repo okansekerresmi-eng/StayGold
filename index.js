@@ -30,6 +30,44 @@ const randInt = (min, max) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 const choice = (arr) => arr[randInt(0, arr.length - 1)];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms / SPEED));
+const WARP_CLI =
+  `"C:\\Program Files\\Cloudflare\\Cloudflare WARP\\warp-cli.exe"`;
+
+function warpConnect() {
+  return new Promise((resolve, reject) => {
+    console.log("🛡️ Cloudflare WARP bağlanıyor...");
+
+    spawn("cmd.exe", ["/c", `${WARP_CLI} connect`], {
+      stdio: "ignore",
+      detached: false,
+    });
+
+    // bağlantı kontrol döngüsü
+    const start = Date.now();
+    const timeoutMs = 20000;
+
+    const check = () => {
+      spawn("cmd.exe", ["/c", `${WARP_CLI} status`], {
+        stdio: ["ignore", "pipe", "ignore"],
+      }).stdout.on("data", (data) => {
+        const out = data.toString().toLowerCase();
+
+        if (out.includes("connected")) {
+          console.log("✅ WARP bağlandı");
+          return resolve();
+        }
+
+        if (Date.now() - start > timeoutMs) {
+          return reject(new Error("⛔ WARP bağlanamadı (timeout)"));
+        }
+
+        setTimeout(check, 1500);
+      });
+    };
+
+    setTimeout(check, 2000);
+  });
+}
  
 function runShutdownBat() {
   const batPath = path.join(__dirname, "shut.bat");
@@ -929,11 +967,20 @@ async function main() {
     console.log("🔑 Gelen kod:", code);
  
   await sleep(4300);
-// ✅ Kodu yaz (BURASI ÖNEMLİ)
+  // ✅ Kodu yaz (BURASI ÖNEMLİ)
+    // 1️⃣ Kod yaz
   await clearAndType(page, CONFIRM_SELECTOR, code);
- 
-  await sleep(1200);
+  console.log("✍️ Onay kodu yazıldı");
+
+  // 2️⃣ WARP bağlan
+  await warpConnect();
+
+  // ekstra güvenlik beklemesi
+  await sleep(2500);
+
+  // 3️⃣ Confirm / İleri
   await clickIleri(page);
+  console.log("➡️ Confirm tıklandı (WARP aktif)");
 
   // ✅ hesap oluşturma başarılı mı kontrol et
   await page.waitForFunction(
