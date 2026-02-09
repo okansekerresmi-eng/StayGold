@@ -30,57 +30,7 @@ const randInt = (min, max) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
 const choice = (arr) => arr[randInt(0, arr.length - 1)];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms / SPEED));
-const { execFile } = require("child_process");
-
-const WARP_CLI =
-  "C:\\Program Files\\Cloudflare\\Cloudflare WARP\\warp-cli.exe";
-
-function warpConnectOnly() {
-  console.log("🛡️ WARP connect komutu gönderiliyor...");
-
-  execFile(
-    WARP_CLI,
-    ["connect"],
-    { windowsHide: true },
-    () => {
-      // tamamen sessiz → hata da yazmaz
-      console.log("✅ WARP bağlan komutu gönderildi");
-    }
-  );
-}
-function waitWarpConnected({ timeoutMs = 20000, pollMs = 1500 } = {}) {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-
-    const check = () => {
-      execFile(
-        WARP_CLI,
-        ["status"],
-        { windowsHide: true },
-        (err, stdout) => {
-          const out = (stdout || "").toLowerCase();
-
-          if (out.includes("connected")) {
-            console.log("🟢 WARP gerçekten CONNECTED");
-            return resolve();
-          }
-
-          if (Date.now() - start > timeoutMs) {
-            return reject(
-              new Error("⛔ WARP connected olmadı (timeout)")
-            );
-          }
-
-          setTimeout(check, pollMs);
-        }
-      );
-    };
-
-    check();
-  });
-}
-
-
+ 
 function runShutdownBat() {
   const batPath = path.join(__dirname, "shut.bat");
  
@@ -979,21 +929,11 @@ async function main() {
     console.log("🔑 Gelen kod:", code);
  
   await sleep(4300);
-  // ✅ Kodu yaz (BURASI ÖNEMLİ)
-    // 1️⃣ Kod yaz
+// ✅ Kodu yaz (BURASI ÖNEMLİ)
   await clearAndType(page, CONFIRM_SELECTOR, code);
-  console.log("✍️ Onay kodu yazıldı");
-
-  // 2️⃣ WARP bağlan (komutu gönder)
-  warpConnectOnly();
-
-  // 3️⃣ GERÇEKTEN bağlanmasını bekle
-  await waitWarpConnected({ timeoutMs: 20000 });
-
-  // 4️⃣ Confirm / İleri (ARTIK GARANTİLİ)
+ 
+  await sleep(1200);
   await clickIleri(page);
-  console.log("➡️ Confirm tıklandı (WARP CONNECTED)");
-
 
   // ✅ hesap oluşturma başarılı mı kontrol et
   await page.waitForFunction(
