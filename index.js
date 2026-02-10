@@ -851,21 +851,37 @@ async function main() {
   console.log("👤 Ad Soyad:", fullName);
   console.log("🧩 Username:", username);
 
-  // 🔗 SADECE VAR OLAN CHROME'A BAĞLAN
+  // 🔗 VAR OLAN CHROME'A BAĞLAN
   const browser = await puppeteer.connect({
     browserURL: `http://127.0.0.1:${DEBUG_PORT}`,
     defaultViewport: null,
   });
 
-  let pages = await browser.pages();
-  let page = pages[0] || await browser.newPage();
+  // 🔎 Instagram sekmesini bul
+  let page = null;
+  const pages = await browser.pages();
 
-  await page.goto(SITE_URL, { waitUntil: "domcontentloaded" });
+  for (const p of pages) {
+    if (p.url().includes("instagram.com")) {
+      page = p;
+      break;
+    }
+  }
 
-  await sleep(2000);
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await sleep(2000);
-  
+  // ➕ Yoksa yeni sekme aç
+  if (!page) {
+    page = await browser.newPage();
+    await page.goto(SITE_URL, { waitUntil: "domcontentloaded" });
+  }
+
+  // 🔥 SEKMEYİ ÖNE GETİR
+  await page.bringToFront();
+  await sleep(1000);
+
+  console.log("🧠 Aktif URL:", page.url());
+
+  // ⬇️ BURADAN SONRASI SENİN MEVCUT KODUN
+
   // 1️⃣ Email + Password
   await fillEmailPasswordHuman(page, {
     email,
