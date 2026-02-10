@@ -12,7 +12,7 @@ const SITE_URL = "https://www.instagram.com/accounts/emailsignup/"; // KAYIT SAY
 const PASSWORD_VALUE = "Okanokan10!";
 const SHEET_ID = "1UgCB8MemIK0uEUOewbAD7g9CCnxxUdXIOXZR9UV5zdw";
 const SHEET_NAME = "imap";
- 
+const DEBUG_PORT = 9222; 
 const CREDENTIALS_DIR = path.join(__dirname, "credentials");
 const SPEED = 1.5;
 const NAMES_FILE = path.join(__dirname, "isimler.txt");
@@ -20,21 +20,16 @@ const MONTHS = [
   "January","February","March","April","May","June",
   "July","August","September","October","November","December"
 ];
-const CHROME_PATH =
-  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const DEBUG_PORT = 9222;
-////////////////////////////////////////////////
- 
-/* ---------------- UTIL ---------------- */
 const randInt = (min, max) =>
   Math.floor(Math.random() * (max - min + 1)) + min;
+
 const choice = (arr) => arr[randInt(0, arr.length - 1)];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms / SPEED));
- 
+
+const sleep = (ms) =>
+  new Promise((r) => setTimeout(r, ms / SPEED));
+
 function runShutdownBat() {
   const batPath = path.join(__dirname, "shut.bat");
- 
-  console.log("⚠️ shut.bat çalıştırılıyor...");
   spawn("cmd.exe", ["/c", batPath], {
     detached: true,
     stdio: "ignore",
@@ -135,13 +130,6 @@ function generatePlusEmail(baseEmail) {
   const plus = randInt(100, 999);
   return `${local}+${plus}@${domain}`;
 }
- 
-function getUniqueProfileDir() {
-  return path.join(
-    __dirname,
-    "tmp_chrome_profile_" + Date.now() + "_" + randInt(1000, 9999)
-  );
-}
 
 function decodeBase64(data) {
   return Buffer.from(
@@ -161,32 +149,6 @@ function createOAuthClient(tokenFile) {
 
   auth.setCredentials(JSON.parse(fs.readFileSync(tokenFile)));
   return auth;
-}
-
- 
-function launchChromeDebug() {
-  const profileDir = getUniqueProfileDir();
-
-  const args = [
-    `--remote-debugging-port=${DEBUG_PORT}`,
-    `--user-data-dir=${profileDir}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-extensions",
-    "--disable-sync",
-    "--disable-translate",
-    "--disable-background-networking",
-    "--disable-background-timer-throttling",
-    "--disable-renderer-backgrounding",
-    "--start-maximized",
-  ];
-
-  console.log("🚀 Yeni Chrome profili ile başlatılıyor:", profileDir);
-
-  return spawn(CHROME_PATH, args, {
-    detached: true,
-    stdio: "ignore",
-  });
 }
 
 /* ---------------- PAGE ---------------- */
@@ -877,29 +839,30 @@ async function main() {
   const tokenFile = getRandomTokenFile();
   const baseEmail = await getEmailFromToken(tokenFile);
   const email = generatePlusEmail(baseEmail);
+
   console.log("🔐 Seçilen token:", path.basename(tokenFile));
   console.log("📧 Token Gmail:", baseEmail);
 
   const words = getAllNameWords();
   const fullName = `${choice(words)} ${choice(words)}`;
   const username = generateUsernameFromFullName(fullName);
- 
+
   console.log("📧 Email:", email);
   console.log("👤 Ad Soyad:", fullName);
   console.log("🧩 Username:", username);
- 
-  launchChromeDebug();
-  await sleep(4000);
- 
+
+  // 🔗 SADECE VAR OLAN CHROME'A BAĞLAN
   const browser = await puppeteer.connect({
     browserURL: `http://127.0.0.1:${DEBUG_PORT}`,
     defaultViewport: null,
   });
- 
-  const page = (await browser.pages())[0] || (await browser.newPage());
+
+  let pages = await browser.pages();
+  let page = pages[0] || await browser.newPage();
+
   await page.goto(SITE_URL, { waitUntil: "domcontentloaded" });
-  // 🔄 Sayfa yüklendikten sonra F5 (reload)
-  await sleep(2000); // insan gibi kısa bekleme
+
+  await sleep(2000);
   await page.reload({ waitUntil: "domcontentloaded" });
   await sleep(2000);
   
