@@ -5,7 +5,6 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const { spawn } = require("child_process");
-const CALISTIR_PATH = "C:\\Users\\小橙子\\Desktop\\calistir.js";
 
 /* ================= CONFIG ================= */
 const CHROME_PATH =
@@ -492,43 +491,6 @@ async function markUserOnline(sheets, username) {
 
   console.log(`🟢 ${username} → C${rowNumber} = online`);
 }
-async function forceClickNotNow(page, timeout = 15000) {
-  try {
-
-    await page.waitForSelector('[role="button"]', { timeout });
-
-    const clicked = await page.evaluate(() => {
-      const el = [...document.querySelectorAll('[role="button"]')]
-        .find(e =>
-          e.offsetParent &&
-          e.textContent &&
-          e.textContent.trim().toLowerCase() === "not now"
-        );
-
-      if (!el) return false;
-
-      el.scrollIntoView({ block: "center" });
-      el.click();
-      return true;
-    });
-
-    if (clicked) {
-      console.log("🚫 NOT NOW tıklandı");
-
-      // Navigation olabilir
-      await page.waitForNavigation({
-        waitUntil: "domcontentloaded",
-        timeout: 10000
-      }).catch(() => {});
-
-      await sleep(1500);
-    }
-
-  } catch {
-    console.log("ℹ️ Not now popup yok / atlandı");
-  }
-}
-
 function runBioUploader() {
   return new Promise((resolve) => {
     console.log("🧬 bio.js çalıştırılıyor...");
@@ -589,46 +551,6 @@ function startHumanConfirmWatcher(page, sheets, username, row) {
       // sessiz geç — navigation sırasında hata olabilir
     }
   }, 1500); // ⏱️ 1.5 saniyede bir kontrol
-}
-async function clearConnectedChromeData(browser) {
-  console.log("🧹 Bağlı Chrome verileri temizleniyor (CDP) ...");
-
-  const client = await browser.target().createCDPSession();
-
-  // Global cookie + cache
-  await client.send("Network.clearBrowserCookies").catch(() => {});
-  await client.send("Network.clearBrowserCache").catch(() => {});
-
-  // Cookie domainlerinden origin toplayıp storage'ları da temizle
-  const allCookies = (await client.send("Network.getAllCookies").catch(() => ({ cookies: [] }))).cookies || [];
-
-  const origins = new Set();
-  for (const c of allCookies) {
-    let d = (c.domain || "").trim();
-    if (!d) continue;
-    if (d.startsWith(".")) d = d.slice(1);
-
-    // "com" gibi garip şeyleri ele
-    if (!d.includes(".")) continue;
-
-    origins.add(`https://${d}`);
-    origins.add(`http://${d}`);
-  }
-
-  // Instagram ek garantili
-  origins.add("https://www.instagram.com");
-  origins.add("https://m.instagram.com");
-  origins.add("https://www.facebook.com");
-  origins.add("https://web.facebook.com");
-
-  for (const origin of origins) {
-    await client.send("Storage.clearDataForOrigin", {
-      origin,
-      storageTypes: "all",
-    }).catch(() => {});
-  }
-
-  console.log(`✅ Temizlendi: cookie+cache + ${origins.size} origin storage`);
 }
 
 async function getRowByUsername(sheets, username) {
@@ -815,36 +737,6 @@ async function typeFirstAvailable(page, selectors, text) {
   throw new Error("Hiçbir input bulunamadı");
 }
 
-async function typeAndClear(page, selector, text) {
-  await page.waitForSelector(selector, { visible: true });
-  await page.evaluate(sel => {
-    const el = document.querySelector(sel);
-    el.value = "";
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  }, selector);
-  await page.type(selector, text, { delay: 80 });
-}
-
-async function clickByText(page, textRegex) {
-  await page.waitForFunction(
-    rx => {
-      const r = new RegExp(rx, "i");
-      return [...document.querySelectorAll("button, div, span, [role='button']")]
-        .some(n => n.offsetParent && r.test(n.innerText || ""));
-    },
-    {},
-    textRegex
-  );
-
-  await page.evaluate(rx => {
-    const r = new RegExp(rx, "i");
-    const el = [...document.querySelectorAll("button, div, span, [role='button']")]
-      .find(n => n.offsetParent && r.test(n.innerText || ""));
-    el.scrollIntoView({ block: "center" });
-    el.click();
-  }, textRegex);
-}
-
 /* ================= MAIN ================= */
 (async () => {
   try {
@@ -878,11 +770,9 @@ async function clickByText(page, textRegex) {
         await markSuspendedByUsername(sheets, suspendedUsername);
       }
 
-      restartCalistir(); // 🔥 EN SONDA
-
+      restartCalistir();
       return;
     }
-
 
     /* ================= ZATEN LOGIN VAR MI ================= */
     let loggedUser = await getLoggedInUsernameIfExists(page);
@@ -893,7 +783,8 @@ async function clickByText(page, textRegex) {
 
     if (!loggedUser) {
       /* ================= LOGIN FLOW ================= */
-      const { username, password, rawSecret, row } = await getRandomInstagramAccount();
+      const { username, password, rawSecret, row } =
+        await getRandomInstagramAccount();
 
       startHumanConfirmWatcher(page, sheets, username, row);
       console.log("📸 Login yapılacak IG:", username);
@@ -905,21 +796,30 @@ async function clickByText(page, textRegex) {
 
         await clickSuspendedIcon(page);
         const suspendedUsername = await getUsernameFromLogoutText(page);
-        if (suspendedUsername) await markSuspendedByUsername(sheets, suspendedUsername);
+        if (suspendedUsername)
+          await markSuspendedByUsername(sheets, suspendedUsername);
         return;
       }
 
       // USERNAME
       await typeFirstAvailable(
         page,
-        ['input[name="username"]', 'input[name="email"]', 'input[autocomplete="username"]'],
+        [
+          'input[name="username"]',
+          'input[name="email"]',
+          'input[autocomplete="username"]',
+        ],
         username
       );
 
       // PASSWORD
       await typeFirstAvailable(
         page,
-        ['input[name="password"]', 'input[name="pass"]', 'input[autocomplete="current-password"]'],
+        [
+          'input[name="password"]',
+          'input[name="pass"]',
+          'input[autocomplete="current-password"]',
+        ],
         password
       );
 
@@ -928,7 +828,9 @@ async function clickByText(page, textRegex) {
 
       /* ================= 2FA ================= */
       try {
-        await page.waitForSelector('input[name="verificationCode"]', { timeout: 60000 });
+        await page.waitForSelector('input[name="verificationCode"]', {
+          timeout: 60000,
+        });
 
         const code = generate2FA(rawSecret);
 
@@ -939,35 +841,47 @@ async function clickByText(page, textRegex) {
         );
 
         await Promise.all([
-          page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 })
-            .catch(e => { if (!isNetworkError(e)) throw e; }),
-          clickConfirmButton(page)
+          page
+            .waitForNavigation({
+              waitUntil: "domcontentloaded",
+              timeout: 20000,
+            })
+            .catch((e) => {
+              if (!isNetworkError(e)) throw e;
+            }),
+          clickConfirmButton(page),
         ]);
 
         await sleep(1500);
-
       } catch (e) {
-        console.log("⚠️ 2FA ekranı gelmedi / patladı → Login kontrol ediliyor...");
+        console.log(
+          "⚠️ 2FA ekranı gelmedi / patladı → Login kontrol ediliyor..."
+        );
 
-        const loggedAfterFail = await getLoggedInUsernameIfExists(page);
-        if (!loggedAfterFail) throw new Error("2FA başarısız ve login yapılmamış");
-        console.log("✅ 2FA hatasına rağmen login olmuş:", loggedAfterFail);
+        const loggedAfterFail =
+          await getLoggedInUsernameIfExists(page);
+        if (!loggedAfterFail)
+          throw new Error("2FA başarısız ve login yapılmamış");
+        console.log(
+          "✅ 2FA hatasına rağmen login olmuş:",
+          loggedAfterFail
+        );
       }
 
-      // login sonrası suspend kontrol
       if (await checkIfSuspended(page)) {
         console.log("⛔ Hesap SUSPENDED (login sonrası)");
 
         await clickSuspendedIcon(page);
-        const suspendedUsername = await getUsernameFromLogoutText(page);
-        if (suspendedUsername) await markSuspendedByUsername(sheets, suspendedUsername);
+        const suspendedUsername =
+          await getUsernameFromLogoutText(page);
+        if (suspendedUsername)
+          await markSuspendedByUsername(sheets, suspendedUsername);
         return;
       }
 
-      // login olmuş kullanıcıyı tekrar yakala (2FA sonrası)
-      loggedUser = await getLoggedInUsernameIfExists(page) || username;
+      loggedUser =
+        (await getLoggedInUsernameIfExists(page)) || username;
 
-      // ✅ login yaptığın satırı işaretle
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
         range: `${SHEET_NAME}!B${row}`,
@@ -977,66 +891,46 @@ async function clickByText(page, textRegex) {
       console.log(`➕ Sheet işaretlendi → B${row}`);
     }
 
-    /* ================= BURASI ÖNEMLİ: EDIT'E ZORLA ================= */
+    /* ================= EDIT SAYFASINA GİT ================= */
     console.log("🔁 Edit sayfasına yönlendiriliyor...");
-    await safeGoto(page, "https://www.instagram.com/accounts/edit/");
+    await safeGoto(
+      page,
+      "https://www.instagram.com/accounts/edit/"
+    );
 
-    // Edit sayfası gerçekten geldi mi?
     await page.waitForFunction(
       () => location.pathname.includes("/accounts/edit"),
       { timeout: 30000 }
     );
 
-    // edit sonrası da suspend kontrol (nadiren redirect)
     if (await checkIfSuspended(page)) {
       console.log("⛔ Hesap SUSPENDED (edit redirect sonrası)");
 
       await clickSuspendedIcon(page);
-      const suspendedUsername = await getUsernameFromLogoutText(page);
-      if (suspendedUsername) await markSuspendedByUsername(sheets, suspendedUsername);
+      const suspendedUsername =
+        await getUsernameFromLogoutText(page);
+      if (suspendedUsername)
+        await markSuspendedByUsername(sheets, suspendedUsername);
       return;
     }
 
     console.log("✅ Edit sayfası açıldı");
 
-    /* ================= LOGIN VARSA ONLINE İŞARETLE ================= */
-    const finalUser = loggedUser || (await getLoggedInUsernameIfExists(page));
+    /* ================= ONLINE İŞARETLE ================= */
+    const finalUser =
+      loggedUser || (await getLoggedInUsernameIfExists(page));
+
     if (finalUser) {
       await markUserOnline(sheets, finalUser);
     }
 
-    /* ================= PP / BIO / POST AKIŞI ================= */
-    const row = finalUser ? await getRowByUsername(sheets, finalUser) : null;
-
-    if (!row) {
-      console.log("⚠️ Row bulunamadı → devam edilemiyor:", finalUser);
-      return;
-    }
-
-    console.log("📸 Profil foto kontrolü atlandı → profile.js zorla çalıştırılıyor");
-    await runProfileUploader();
-    const bioStatus = await getBioStatusFromSheet(sheets, row);
-    if (bioStatus !== "BIO") {
-      const bioOk = await runBioUploader();
-
-      if (bioOk) {
-        await markBioDone(sheets, row);
-
-        const postStatus = await getPostStatusFromSheet(sheets, row);
-        if (postStatus !== "PAYLAŞILDI") {
-          await runPostUploader();
-        } else {
-          console.log("ℹ️ Post zaten paylaşılmış");
-        }
-      } else {
-        console.log("⚠️ bio.js başarısız → BIO işaretlenmedi");
-      }
-    }
-
+    /* ================= LINK EKLEYİCİ ================= */
+    runLinkAdder();
   } catch (err) {
     console.error("❌ HATA:", err.message || err);
   }
 })();
+
 
 // 🔥 Supervisor nazik kapatma desteği
 process.on("SIGTERM", () => {
