@@ -22,40 +22,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const { exec } = require("child_process");
 const { execSync } = require("child_process");
 
-function killChromeOnPort() {
-  try {
-    execSync("taskkill /F /IM chrome.exe", { stdio: "ignore" });
-    console.log("🛑 Chrome kapatıldı");
-  } catch {}
-}
-
-function deleteUserDataDir(dir) {
-  try {
-    if (fs.existsSync(dir)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-      console.log("🧹 User-data-dir tamamen silindi");
-    }
-  } catch (e) {
-    console.log("Silme hatası:", e.message);
-  }
-}
-
-function startFreshChrome() {
-  const USER_DATA_DIR = "C:\\Chrome9000Profile";
-
-  spawn(CHROME_PATH, [
-    `--remote-debugging-port=${DEBUG_PORT}`,
-    `--user-data-dir=${USER_DATA_DIR}`,
-    "--no-first-run",
-    "--no-default-browser-check"
-  ], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true
-  }).unref();
-
-  return USER_DATA_DIR;
-}
 function isNetworkError(err) {
   const msg = String(err?.message || err || "").toLowerCase();
 
@@ -121,72 +87,12 @@ function waitForDebugPort(timeout = 20000) {
     check();
   });
 }
-function runProfileUploader() {
-  return new Promise((resolve) => {
-    console.log("🚀 profile.js çalıştırılıyor...");
-
-    exec(
-      `node "${path.join(__dirname, "profile.js")}"`,
-      (err, stdout, stderr) => {
-        if (err) {
-          console.error("❌ profile.js hata verdi:", err.message);
-        }
-        if (stdout) console.log("[profile.js stdout]", stdout);
-        if (stderr) console.error("[profile.js stderr]", stderr);
-        resolve();
-      }
-    );
-  });
-}
-
-function restartCalistir() {
-  try {
-    console.log("🔄 calistir.js restart ediliyor...");
-
-    execSync(
-      `wmic process where "CommandLine like '%calistir.js%'" call terminate`,
-      { stdio: "ignore" }
-    );
-
-  } catch {}
-
-  spawn("node", [CALISTIR_PATH], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true
-  }).unref();
-
-  console.log("✅ calistir.js tekrar başlatıldı");
-}
-
 
 function getRandomCredentialFile() {
   const files = fs.readdirSync(CREDENTIALS_DIR).filter(f => f.endsWith(".json"));
   if (!files.length) throw new Error("credentials klasörü boş");
   return path.join(CREDENTIALS_DIR, files[Math.floor(Math.random() * files.length)]);
 }
-function runPostUploader() {
-  return new Promise((resolve) => {
-    console.log("📸 post.js çalıştırılıyor...");
-
-    exec(
-      `node "${path.join(__dirname, "post.js")}"`,
-      (err, stdout, stderr) => {
-        if (err) {
-          console.error("❌ post.js hata verdi:", err.message);
-          resolve(false);
-          return;
-        }
-
-        if (stdout) console.log("[post.js stdout]", stdout);
-        if (stderr) console.error("[post.js stderr]", stderr);
-
-        resolve(true);
-      }
-    );
-  });
-}
-
 async function clickConfirmButton(page, timeout = 45000) {
   const rx = "^(confirm|onayla|continue|devam)$";
 
@@ -296,20 +202,6 @@ async function safeGoto(page, url, maxRetry = 5) {
       }
     }
   }
-}
-
-
-async function markBioDone(sheets, row) {
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!E${row}`,
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [["BIO"]],
-    },
-  });
-
-  console.log(`🧾 E${row} → BIO`);
 }
 async function clickSuspendedIcon(page) {
   await page.waitForSelector(
@@ -491,28 +383,6 @@ async function markUserOnline(sheets, username) {
 
   console.log(`🟢 ${username} → C${rowNumber} = online`);
 }
-function runBioUploader() {
-  return new Promise((resolve) => {
-    console.log("🧬 bio.js çalıştırılıyor...");
-
-    exec(
-      `node "${path.join(__dirname, "bio.js")}"`,
-      (err, stdout, stderr) => {
-        if (err) {
-          console.error("❌ bio.js hata verdi:", err.message);
-          resolve(false);
-          return;
-        }
-
-        if (stdout) console.log("[bio.js stdout]", stdout);
-        if (stderr) console.error("[bio.js stderr]", stderr);
-
-        resolve(true);
-      }
-    );
-  });
-}
-
 
 function startHumanConfirmWatcher(page, sheets, username, row) {
   let stopped = false;
@@ -553,63 +423,24 @@ function startHumanConfirmWatcher(page, sheets, username, row) {
   }, 1500); // ⏱️ 1.5 saniyede bir kontrol
 }
 
-async function getRowByUsername(sheets, username) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:A`,
-  });
-
-  const rows = res.data.values || [];
-
-  const index = rows.findIndex(r =>
-    r[0] && r[0].split("-")[0].trim() === username
-  );
-
-  if (index === -1) return null;
-
-  return index + 1;
-}
-
 async function checkIfSuspended(page) {
-  const url = page.url();
-  if (url.includes("/accounts/suspended")) return true;
+  try {
+    return await page.evaluate(() => {
+      const text = document.body.innerText.toLowerCase();
 
-  return await page.evaluate(() => {
-    const t = (document.body?.innerText || "").toLowerCase();
-
-    // 🔴 Normal suspended kontrolleri
-    if (
-      location.pathname.includes("/accounts/suspended") ||
-      t.includes("account has been suspended") ||
-      t.includes("we suspended your account") ||
-      t.includes("suspended")
-    ) {
-      return true;
-    }
-
-    // 🔴 YENİ: Check your email ekranı
-    const emailCheck = [...document.querySelectorAll("span")]
-      .some(s =>
-        s.innerText &&
-        s.innerText.trim().toLowerCase() === "check your email"
+      return (
+        text.includes("account has been suspended") ||
+        text.includes("hesabın askıya alındı") ||
+        text.includes("your account has been disabled") ||
+        text.includes("we suspended your account")
       );
-
-    return emailCheck;
-  });
+    });
+  } catch {
+    return false;
+  }
 }
 
-async function markSuspended(sheets, row) {
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!C${row}`,
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [["SUSPENDED"]],
-    },
-  });
 
-  console.log(`⛔ C${row} → SUSPENDED`);
-}
 
 async function clickLoginButton(page, timeout = 45000) {
 
@@ -662,59 +493,6 @@ async function clickLoginButton(page, timeout = 45000) {
   await new Promise(r => setTimeout(r, 1500));
 }
 
-async function getPostStatusFromSheet(sheets, row) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!H${row}`,
-  });
-
-  const val = res.data.values?.[0]?.[0] || "";
-  return val.trim().toUpperCase(); // "PAYLAŞILDI" ya da ""
-}
-
-async function hasProfilePhoto(page) {
-  return await page.evaluate(() => {
-    const img = [...document.querySelectorAll("img")]
-      .find(i =>
-        i.alt &&
-        i.alt.endsWith("'s profile picture") &&
-        i.src
-      );
-
-    if (!img) return false;
-
-    const src = img.src.toLowerCase();
-
-    // ❌ default / boş avatarlar
-    if (
-      src.includes("anonymous") ||
-      src.includes("silhouette") ||
-      src.includes("default")
-    ) {
-      return false;
-    }
-
-    // ✅ GERÇEK profil foto (Instagram CDN)
-    if (
-      (src.includes("cdninstagram.com") || src.includes("fbcdn.net")) &&
-      src.includes(".jpg")
-    ) {
-      return true;
-    }
-
-    return false;
-  });
-}
-
-async function getBioStatusFromSheet(sheets, row) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!E${row}`,
-  });
-
-  const val = res.data.values?.[0]?.[0] || "";
-  return val.trim().toUpperCase(); // "BIO" ya da ""
-}
 async function typeFirstAvailable(page, selectors, text) {
   for (const selector of selectors) {
     try {
@@ -730,7 +508,8 @@ async function typeFirstAvailable(page, selectors, text) {
         el.dispatchEvent(new Event("input", { bubbles: true }));
       }, selector);
 
-      await page.type(selector, text, { delay: 80 });
+      const delay = Math.floor(Math.random() * 120) + 40;
+      await page.type(selector, text, { delay });
       return;
     } catch {}
   }
@@ -769,8 +548,6 @@ async function typeFirstAvailable(page, selectors, text) {
       if (suspendedUsername) {
         await markSuspendedByUsername(sheets, suspendedUsername);
       }
-
-      restartCalistir();
       return;
     }
 
@@ -779,146 +556,115 @@ async function typeFirstAvailable(page, selectors, text) {
     if (loggedUser) {
       console.log("✅ Zaten login:", loggedUser);
       runLinkAdder();
+      return;
     }
 
-    if (!loggedUser) {
-      /* ================= LOGIN FLOW ================= */
-      const { username, password, rawSecret, row } =
-        await getRandomInstagramAccount();
+    /* ================= LOGIN FLOW ================= */
+    const { username, password, rawSecret, row } =
+      await getRandomInstagramAccount();
 
-      startHumanConfirmWatcher(page, sheets, username, row);
-      console.log("📸 Login yapılacak IG:", username);
+    startHumanConfirmWatcher(page, sheets, username, row);
+    console.log("📸 Login yapılacak IG:", username);
 
-      await safeGoto(page, INSTAGRAM_LOGIN_URL);
-
-      if (await checkIfSuspended(page)) {
-        console.log("⛔ Hesap SUSPENDED (login sayfası)");
-
-        await clickSuspendedIcon(page);
-        const suspendedUsername = await getUsernameFromLogoutText(page);
-        if (suspendedUsername)
-          await markSuspendedByUsername(sheets, suspendedUsername);
-        return;
-      }
-
-      // USERNAME
-      await typeFirstAvailable(
-        page,
-        [
-          'input[name="username"]',
-          'input[name="email"]',
-          'input[autocomplete="username"]',
-        ],
-        username
-      );
-
-      // PASSWORD
-      await typeFirstAvailable(
-        page,
-        [
-          'input[name="password"]',
-          'input[name="pass"]',
-          'input[autocomplete="current-password"]',
-        ],
-        password
-      );
-
-      await clickLoginButton(page);
-      console.log("🔐 Login gönderildi");
-
-      /* ================= 2FA ================= */
-      try {
-        await page.waitForSelector('input[name="verificationCode"]', {
-          timeout: 60000,
-        });
-
-        const code = generate2FA(rawSecret);
-
-        await typeFirstAvailable(
-          page,
-          ['input[name="verificationCode"]', 'input[type="tel"]'],
-          code
-        );
-
-        await Promise.all([
-          page
-            .waitForNavigation({
-              waitUntil: "domcontentloaded",
-              timeout: 20000,
-            })
-            .catch((e) => {
-              if (!isNetworkError(e)) throw e;
-            }),
-          clickConfirmButton(page),
-        ]);
-
-        await sleep(1500);
-      } catch (e) {
-        console.log(
-          "⚠️ 2FA ekranı gelmedi / patladı → Login kontrol ediliyor..."
-        );
-
-        const loggedAfterFail =
-          await getLoggedInUsernameIfExists(page);
-        if (!loggedAfterFail)
-          throw new Error("2FA başarısız ve login yapılmamış");
-        console.log(
-          "✅ 2FA hatasına rağmen login olmuş:",
-          loggedAfterFail
-        );
-      }
-
-      if (await checkIfSuspended(page)) {
-        console.log("⛔ Hesap SUSPENDED (login sonrası)");
-
-        await clickSuspendedIcon(page);
-        const suspendedUsername =
-          await getUsernameFromLogoutText(page);
-        if (suspendedUsername)
-          await markSuspendedByUsername(sheets, suspendedUsername);
-        return;
-      }
-
-      loggedUser =
-        (await getLoggedInUsernameIfExists(page)) || username;
-
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!B${row}`,
-        valueInputOption: "RAW",
-        requestBody: { values: [["+"]] },
-      });
-      console.log(`➕ Sheet işaretlendi → B${row}`);
-    }
-
-    /* ================= EDIT SAYFASINA GİT ================= */
-    console.log("🔁 Edit sayfasına yönlendiriliyor...");
-    await safeGoto(
-      page,
-      "https://www.instagram.com/accounts/edit/"
-    );
-
-    await page.waitForFunction(
-      () => location.pathname.includes("/accounts/edit"),
-      { timeout: 30000 }
-    );
+    await safeGoto(page, INSTAGRAM_LOGIN_URL);
 
     if (await checkIfSuspended(page)) {
-      console.log("⛔ Hesap SUSPENDED (edit redirect sonrası)");
+      console.log("⛔ Hesap SUSPENDED (login sayfası)");
 
       await clickSuspendedIcon(page);
-      const suspendedUsername =
-        await getUsernameFromLogoutText(page);
+      const suspendedUsername = await getUsernameFromLogoutText(page);
       if (suspendedUsername)
         await markSuspendedByUsername(sheets, suspendedUsername);
       return;
     }
 
-    console.log("✅ Edit sayfası açıldı");
+    // USERNAME
+    await typeFirstAvailable(
+      page,
+      [
+        'input[name="username"]',
+        'input[name="email"]',
+        'input[autocomplete="username"]',
+      ],
+      username
+    );
 
-    /* ================= ONLINE İŞARETLE ================= */
+    // PASSWORD
+    await typeFirstAvailable(
+      page,
+      [
+        'input[name="password"]',
+        'input[name="pass"]',
+        'input[autocomplete="current-password"]',
+      ],
+      password
+    );
+
+    await clickLoginButton(page);
+    console.log("🔐 Login gönderildi");
+
+    /* ================= 2FA ================= */
+    try {
+      await page.waitForSelector('input[name="verificationCode"]', {
+        timeout: 60000,
+      });
+
+      const code = generate2FA(rawSecret);
+
+      await typeFirstAvailable(
+        page,
+        ['input[name="verificationCode"]', 'input[type="tel"]'],
+        code
+      );
+
+      await Promise.all([
+        page
+          .waitForNavigation({
+            waitUntil: "domcontentloaded",
+            timeout: 20000,
+          })
+          .catch((e) => {
+            if (!isNetworkError(e)) throw e;
+          }),
+        clickConfirmButton(page),
+      ]);
+
+      await sleep(1500);
+    } catch (e) {
+      console.log("⚠️ 2FA ekranı gelmedi → Login kontrol ediliyor...");
+
+      const loggedAfterFail =
+        await getLoggedInUsernameIfExists(page);
+
+      if (!loggedAfterFail)
+        throw new Error("2FA başarısız ve login yapılmamış");
+
+      console.log("✅ Login başarılı:", loggedAfterFail);
+    }
+
+    if (await checkIfSuspended(page)) {
+      console.log("⛔ Hesap SUSPENDED (login sonrası)");
+
+      await clickSuspendedIcon(page);
+      const suspendedUsername =
+        await getUsernameFromLogoutText(page);
+
+      if (suspendedUsername)
+        await markSuspendedByUsername(sheets, suspendedUsername);
+      return;
+    }
+
     const finalUser =
-      loggedUser || (await getLoggedInUsernameIfExists(page));
+      (await getLoggedInUsernameIfExists(page)) || username;
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_NAME}!B${row}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [["+"]] },
+    });
+
+    console.log(`➕ Sheet işaretlendi → B${row}`);
 
     if (finalUser) {
       await markUserOnline(sheets, finalUser);
@@ -926,10 +672,12 @@ async function typeFirstAvailable(page, selectors, text) {
 
     /* ================= LINK EKLEYİCİ ================= */
     runLinkAdder();
+
   } catch (err) {
     console.error("❌ HATA:", err.message || err);
   }
 })();
+
 
 
 // 🔥 Supervisor nazik kapatma desteği
